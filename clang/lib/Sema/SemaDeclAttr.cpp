@@ -9,7 +9,7 @@
 //  This file implements decl-related attribute processing.
 //
 //===----------------------------------------------------------------------===//
-
+#include "clang/Sema/OverLogger.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTMutationListener.h"
@@ -47,7 +47,6 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <optional>
-
 using namespace clang;
 using namespace sema;
 
@@ -8578,7 +8577,11 @@ static void handleHandleAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     return;
   D->addAttr(Attr::Create(S.Context, Argument, AL));
 }
-
+static void handleSetOverloadDebug(Sema &S, Decl *D, const ParsedAttr &AL,int on){
+using overload_debug::Loging_mode;
+  overload_debug::logger.set_loging(on?Loging_mode::all:Loging_mode::none);
+  
+}
 template<typename Attr>
 static void handleUnsafeBufferUsage(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(Attr::Create(S.Context, AL));
@@ -9492,6 +9495,15 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
 
   case ParsedAttr::AT_UsingIfExists:
     handleSimpleAttribute<UsingIfExistsAttr>(S, D, AL);
+    break;
+case ParsedAttr::AT_SetOverloadDebug:
+    handleSetOverloadDebug(S,D,AL,-1);
+    break;
+  case ParsedAttr::AT_SetOverloadDebugOn:
+    handleSetOverloadDebug(S,D,AL,1);
+    break;
+  case ParsedAttr::AT_SetOverloadDebugOff:
+    handleSetOverloadDebug(S,D,AL,0);
     break;
   }
 }

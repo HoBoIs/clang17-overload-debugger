@@ -325,6 +325,15 @@ static Attr *handleUnlikely(Sema &S, Stmt *St, const ParsedAttr &A,
 #define WANT_STMT_MERGE_LOGIC
 #include "clang/Sema/AttrParsedAttrImpl.inc"
 #undef WANT_STMT_MERGE_LOGIC
+#include "clang/Sema/OverLogger.h"
+static Attr * handleSetOverloadDebug(Sema &S, Stmt *St, const ParsedAttr &A,
+                          SourceRange Range,int on) {
+  using overload_debug::Loging_mode;
+    overload_debug::logger.set_loging(on?Loging_mode::all:Loging_mode::none);
+  return ::new (S.Context) SetOverloadDebugAttr(S.Context,A,on);
+}
+
+
 
 static void
 CheckForIncompatibleAttributes(Sema &S,
@@ -523,6 +532,12 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return handleLikely(S, St, A, Range);
   case ParsedAttr::AT_Unlikely:
     return handleUnlikely(S, St, A, Range);
+  case ParsedAttr::AT_SetOverloadDebug:
+    return handleSetOverloadDebug(S,St,A,Range,-1);
+  case ParsedAttr::AT_SetOverloadDebugOn:
+    return handleSetOverloadDebug(S,St,A,Range,1);
+  case ParsedAttr::AT_SetOverloadDebugOff:
+    return handleSetOverloadDebug(S,St,A,Range,0);
   default:
     // N.B., ClangAttrEmitter.cpp emits a diagnostic helper that ensures a
     // declaration attribute is not written on a statement, but this code is

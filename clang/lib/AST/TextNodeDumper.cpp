@@ -709,6 +709,12 @@ void TextNodeDumper::dumpName(const NamedDecl *ND) {
     OS << ' ' << ND->getDeclName();
   }
 }
+void TextNodeDumper::dumpQualifiedName(const NamedDecl *ND) {
+  if (ND->getDeclName()) {
+    ColorScope Color(OS, ShowColors, DeclNameColor);
+    OS << ' ' << ND->getQualifiedNameAsString();
+  }
+}
 
 void TextNodeDumper::dumpAccessSpecifier(AccessSpecifier AS) {
   const auto AccessSpelling = getAccessSpelling(AS);

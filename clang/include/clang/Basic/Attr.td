@@ -4199,3 +4199,16 @@ def AvailableOnlyInDefaultEvalMethod : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+def SetOverloadDebug:DeclOrStmtAttr{
+  let Spellings =[CXX11<"overload_debug","set_log">];
+  let Args = [IntArgument<"On">];
+  let Documentation = [Undocumented];
+}
+def SetOverloadDebugOn:DeclOrStmtAttr{
+  let Spellings =[CXX11<"overload_debug","set_log_on">];
+  let Documentation = [Undocumented];
+}
+def SetOverloadDebugOff:DeclOrStmtAttr{
+  let Spellings =[CXX11<"overload_debug","set_log_off">];
+  let Documentation = [Undocumented];
+}

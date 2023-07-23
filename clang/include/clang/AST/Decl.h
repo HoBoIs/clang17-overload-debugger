@@ -2954,6 +2954,7 @@ public:
   static FunctionDecl *castFromDeclContext(const DeclContext *DC) {
     return static_cast<FunctionDecl *>(const_cast<DeclContext*>(DC));
   }
+  void dumpSignature(void) const;
 };
 
 /// Represents a member of a struct/union/class.
@@ -4924,7 +4925,6 @@ inline bool IsEnumDeclScoped(EnumDecl *ED) {
 static constexpr StringRef getOpenMPVariantManglingSeparatorStr() {
   return "$ompvariant";
 }
-
 } // namespace clang
 
 #endif // LLVM_CLANG_AST_DECL_H
