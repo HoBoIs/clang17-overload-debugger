@@ -326,6 +326,8 @@ static Attr *handleUnlikely(Sema &S, Stmt *St, const ParsedAttr &A,
 #include "clang/Sema/AttrParsedAttrImpl.inc"
 #undef WANT_STMT_MERGE_LOGIC
 #include "clang/Sema/OverLogger.h"
+
+
 static Attr * handleSetOverloadDebug(Sema &S, Stmt *St, const ParsedAttr &A,
                           SourceRange Range,int on) {
   using overload_debug::Loging_mode;
@@ -333,6 +335,18 @@ static Attr * handleSetOverloadDebug(Sema &S, Stmt *St, const ParsedAttr &A,
   return ::new (S.Context) SetOverloadDebugAttr(S.Context,A,on);
 }
 
+static Attr* handleSetOverloadDebug_p(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range){
+    int on=0;
+    Expr *E = A.getArgAsExpr(0);
+    std::optional<llvm::APSInt> Idx = llvm::APSInt(32);
+    if (E->isTypeDependent() || !(Idx = E->getIntegerConstantExpr(S.Context))) {
+      S.Diag(A.getLoc(), diag::err_attribute_argument_n_type)
+          << A << 1 << AANT_ArgumentIntegerConstant << E->getSourceRange();
+      return 0;
+    }
+    on = Idx->getZExtValue();
+    return handleSetOverloadDebug(S,St,A,Range,on);
+}
 
 
 static void
@@ -533,7 +547,7 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
   case ParsedAttr::AT_Unlikely:
     return handleUnlikely(S, St, A, Range);
   case ParsedAttr::AT_SetOverloadDebug:
-    return handleSetOverloadDebug(S,St,A,Range,-1);
+    return handleSetOverloadDebug_p(S,St,A,Range);
   case ParsedAttr::AT_SetOverloadDebugOn:
     return handleSetOverloadDebug(S,St,A,Range,1);
   case ParsedAttr::AT_SetOverloadDebugOff:

@@ -8577,11 +8577,29 @@ static void handleHandleAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     return;
   D->addAttr(Attr::Create(S.Context, Argument, AL));
 }
+
 static void handleSetOverloadDebug(Sema &S, Decl *D, const ParsedAttr &AL,int on){
 using overload_debug::Loging_mode;
   overload_debug::logger.set_loging(on?Loging_mode::all:Loging_mode::none);
-  
 }
+
+
+static void handleSetOverloadDebug_p(Sema &S, Decl *D, const ParsedAttr &AL){
+    int on=0;
+    Expr *E = AL.getArgAsExpr(0);
+    std::optional<llvm::APSInt> Idx = llvm::APSInt(32);
+    if (E->isTypeDependent() || !(Idx = E->getIntegerConstantExpr(S.Context))) {
+      S.Diag(AL.getLoc(), diag::err_attribute_argument_n_type)
+          << AL << 1 << AANT_ArgumentIntegerConstant << E->getSourceRange();
+      return;
+    }
+    on = Idx->getZExtValue();
+    handleSetOverloadDebug(S,D,AL,on);
+}
+
+
+
+
 template<typename Attr>
 static void handleUnsafeBufferUsage(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(Attr::Create(S.Context, AL));
@@ -9497,7 +9515,7 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
     handleSimpleAttribute<UsingIfExistsAttr>(S, D, AL);
     break;
 case ParsedAttr::AT_SetOverloadDebug:
-    handleSetOverloadDebug(S,D,AL,-1);
+    handleSetOverloadDebug_p(S,D,AL);
     break;
   case ParsedAttr::AT_SetOverloadDebugOn:
     handleSetOverloadDebug(S,D,AL,1);

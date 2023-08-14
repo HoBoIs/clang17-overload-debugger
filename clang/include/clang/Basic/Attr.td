@@ -4212,3 +4212,13 @@ def SetOverloadDebugOff:DeclOrStmtAttr{
   let Spellings =[CXX11<"overload_debug","set_log_off">];
   let Documentation = [Undocumented];
 }
+def SetOverloadDebugInplicit:DeclOrStmtAttr{
+  let Spellings =[CXX11<"overload_debug","set_log_inplicit">];
+  let Documentation = [Undocumented];
+}
+def SetOverloadDebugFun: DeclOrStmtAttr{
+  let Spellings =[CXX11<"overload_debug","set_log_fun">];
+  let Args = [DeclArgument<Function, "FunctionDecl">];
+  let Documentation = [Undocumented];
+}
+
