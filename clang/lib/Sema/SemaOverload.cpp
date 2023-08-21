@@ -10468,7 +10468,6 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
       llvm::erase_if(Candidates, IsWrongSideCandidate);
     }
   }
-//XXX HBI
   for(auto *Cand: Candidates){
     Cand->dumpFunctionSignature();overload_debug::logger<<"\n";
   }

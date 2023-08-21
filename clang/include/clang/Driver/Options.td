@@ -6323,6 +6323,10 @@ def ast_dump_all_EQ : Joined<["-"], "ast-dump-all=">,
 def ast_dump_decl_types : Flag<["-"], "ast-dump-decl-types">,
   HelpText<"Include declaration types in AST dumps">,
   MarshallingInfoFlag<FrontendOpts<"ASTDumpDeclTypes">>;
+def ovdl_dump : Flag<["-"], "ovdl-dump">,
+  HelpText<"Dump ovdl information to stdout">;
+//def ovdl_dump_line : Flag<["-"], "ovdl-dump-line=">, Group<f_Group>, Flags<[CC1Option]>,
+//  HelpText<"Dump ovdl information to stdout from line">;
 def templight_dump : Flag<["-"], "templight-dump">,
   HelpText<"Dump templight information to stdout">;
 def ast_dump_lookups : Flag<["-"], "ast-dump-lookups">,

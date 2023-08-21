@@ -133,6 +133,9 @@ enum ActionKind {
   /// Dump template instantiations
   TemplightDump,
 
+  /// Dump overload info
+  OvdlDump,
+
   /// Run migrator.
   MigrateSource,
 
