@@ -189,6 +189,7 @@ namespace clang {
   class TemplateArgumentLoc;
   class TemplateDecl;
   class TemplateInstantiationCallback;
+  class OverloadCallback;
   class TemplateParameterList;
   class TemplatePartialOrderingContext;
   class TemplateTemplateParmDecl;
@@ -9510,6 +9511,10 @@ public:
   /// instantiations as they are being constructed.
   std::vector<std::unique_ptr<TemplateInstantiationCallback>>
       TemplateInstCallbacks;
+
+
+  std::vector<std::unique_ptr<OverloadCallback>>
+      OverloadCallbacks;
 
   /// The current index into pack expansion arguments that will be
   /// used for substitution of parameter packs.

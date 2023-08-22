@@ -32,6 +32,8 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
+#include "clang/Sema/OverloadCallback.h"
+#include "clang/Sema/Sema.h"
 #include <memory>
 #include <optional>
 #include <system_error>
@@ -314,6 +316,119 @@ void VerifyPCHAction::ExecuteAction() {
                            : serialization::MK_PCH,
                   SourceLocation(),
                   ASTReader::ARR_ConfigurationMismatch);
+}
+
+namespace {
+struct OvdlCandEntry{
+  std::string declLocation;
+  std::string signature;
+  //std::string Concepts; ???
+};
+struct OvdlCompareEntry {
+  OvdlCandEntry C1,C2;
+  bool C1Better;
+  // enum Better{C1,C2,undefined}; ???
+  // Better better;
+  std::string reason;
+};
+struct OvdlResEntry{
+  std::vector<OvdlCandEntry> candidates;
+  OvdlCandEntry best;
+  std::vector<OvdlCompareEntry> compares;
+  std::string callLocation;
+  std::string callSignature;
+};
+} // namespace
+namespace llvm{
+namespace yaml{
+template <> struct MappingTraits<OvdlCandEntry>{
+  static void mapping(IO& io, OvdlCandEntry& fields){
+    io.mapRequired("declLocation",fields.declLocation);
+    io.mapRequired("signature",fields.signature);
+  }
+};
+template <> struct MappingTraits<OvdlCompareEntry>{
+  static void mapping(IO& io, OvdlCompareEntry& fields){
+    io.mapRequired("C1",fields.C1);
+    io.mapRequired("C2",fields.C2);
+    io.mapRequired("C1Better",fields.C1Better);
+    io.mapRequired("reason",fields.reason);
+  }
+};
+template <> struct SequenceTraits<std::vector<OvdlCandEntry>>{
+  static size_t size(IO& io, std::vector<OvdlCandEntry>& v){
+    return v.size();
+  }
+  static OvdlCandEntry& element(IO& io, std::vector<OvdlCandEntry>& v, size_t index){
+    return v[index];
+  }
+  static const bool flow = true;
+};
+template <> struct SequenceTraits<std::vector<OvdlCompareEntry>>{
+  static size_t size(IO& io, std::vector<OvdlCompareEntry>& v){
+    return v.size();
+  }
+  static OvdlCompareEntry& element(IO& io, std::vector<OvdlCompareEntry>& v, size_t index){
+    return v[index];
+  }
+};
+template <> struct MappingTraits<OvdlResEntry>{
+  static void mapping(IO& io, OvdlResEntry& fields){
+    //std::string strcands;
+    //for (const auto& c:fields.candidates){}
+    io.mapRequired("callLocation",fields.callLocation);
+    io.mapRequired("callSignature",fields.callSignature);
+    io.mapRequired("candidates",fields.candidates);
+    io.mapRequired("best",fields.best);
+    io.mapRequired("compares",fields.compares);
+  }
+};
+
+}//namespace clang
+}//namespace llvm
+namespace{
+  class DefaultOverloadInstCallback:public OverloadCallback{
+    public:
+    virtual void initialize(const Sema&) override{};
+    virtual void finalize(const Sema&) override{};
+    virtual void atOverloadBegin(const Sema&S,const SourceLocation& Loc) override{
+    }
+    virtual void atOverloadEnd(const Sema&S,const SourceLocation& Loc) override{
+      displayOvdlResEntry(llvm::outs(),S,Loc);
+    }
+  static OvdlResEntry getResEntry(const Sema& S,const SourceLocation &Loc){
+    OvdlResEntry re;
+    /*for (const auto& c:S.MethodPool){
+      re.candidates.push_back({c.getSourceLocation,c.getSignature});
+    }*/
+    re.callLocation=Loc.printToString(S.SourceMgr);
+    return re;
+  }
+  static void displayOvdlResEntry(llvm::raw_ostream& Out, const Sema& TheSema,
+	const SourceLocation &Loc){
+    std::string YAML;
+    {
+      llvm::raw_string_ostream OS(YAML);
+      llvm::yaml::Output YO(OS);
+      OvdlResEntry Entry=getResEntry(TheSema,Loc);
+      llvm::yaml::EmptyContext Context;
+      llvm::yaml::yamlize(YO,Entry,true,Context);
+    }
+    Out<<"-+-+-"<<YAML<<"\n";
+  }
+  };
+}//namespace;
+std::unique_ptr<ASTConsumer>
+OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
+    return std::make_unique<ASTConsumer>();
+}
+void OvdlDumpAction::ExecuteAction(){
+
+  CompilerInstance &CI = getCompilerInstance();
+  EnsureSemaIsCreated(CI, *this);
+  CI.getSema().OverloadCallbacks.push_back(
+      std::make_unique<DefaultOverloadInstCallback>());
+  ASTFrontendAction::ExecuteAction();
 }
 
 namespace {

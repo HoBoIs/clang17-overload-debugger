@@ -4105,8 +4105,8 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
   case frontend::TemplightDump:
-  case frontend::MigrateSource:
   case frontend::OvdlDump:
+  case frontend::MigrateSource:
     return false;
 
   case frontend::DumpCompilerOptions:

@@ -39,6 +39,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Casting.h"
+#include "clang/Sema/OverloadCallback.h"
 #include <algorithm>
 #include <cstdlib>
 #include <optional>
@@ -10433,6 +10434,9 @@ bool OverloadCandidate::NotValidBecauseConstraintExprHasError() const {
 OverloadingResult
 OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
                                          iterator &Best) {
+
+  atOverloadBegin(S.OverloadCallbacks,S,Loc);
+
   llvm::SmallVector<OverloadCandidate *, 16> Candidates;
   overload_debug::logger<<"BestViableFunction is called\n The candidates are:\n";
   std::transform(begin(), end(), std::back_inserter(Candidates),
@@ -10461,7 +10465,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
     if (ContainsSameSideCandidate) {
       auto IsWrongSideCandidate = [&](OverloadCandidate *Cand) {
         // Check viable function only to avoid unnecessary data copying/moving.
-        return Cand->Viable && Cand->Function &&
+          return Cand->Viable && Cand->Function &&
                S.IdentifyCUDAPreference(Caller, Cand->Function) ==
                    Sema::CFP_WrongSide;
       };
@@ -10496,6 +10500,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
       Cand->dumpFunctionSignature();
       overload_debug::logger<<" is not a viable candidate, constraint is unevaluatable\n";
       Best = end();
+      atOverloadEnd(S.OverloadCallbacks,S,Loc);
       return OR_No_Viable_Function;
     }else{
       Cand->dumpFunctionSignature();
@@ -10506,6 +10511,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   // If we didn't find any viable functions, abort.
   if (Best == end()){
     overload_debug::logger<<"There are no viable candidates\n";
+      atOverloadEnd(S.OverloadCallbacks,S,Loc);
     return OR_No_Viable_Function;
   }
 
@@ -10544,12 +10550,14 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   // If we found more than one best candidate, this is ambiguous.
   if (Best == end()){
     overload_debug::logger<<"Ambigous best viable candidates exist\n";
+      atOverloadEnd(S.OverloadCallbacks,S,Loc);
     return OR_Ambiguous;
   }
   // Best is the best viable function.
   if (Best->Function && Best->Function->isDeleted()){
     Best->dumpFunctionSignature();
     overload_debug::logger<<" is the best candidate function, but it is deleted\n";
+      atOverloadEnd(S.OverloadCallbacks,S,Loc);
     return OR_Deleted;
   }
 
@@ -10559,6 +10567,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   Best->dumpFunctionSignature();
   overload_debug::logger<<" is the best viable function\n";
 
+      atOverloadEnd(S.OverloadCallbacks,S,Loc);
   return OR_Success;
 }
 

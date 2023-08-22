@@ -50,6 +50,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "clang/Sema/OverloadCallback.h"
 #include <optional>
 
 using namespace clang;
