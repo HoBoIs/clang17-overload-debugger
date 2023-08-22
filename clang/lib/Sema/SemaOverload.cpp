@@ -9885,22 +9885,18 @@ bool clang::isBetterOverloadCandidate(
     SourceLocation Loc, OverloadCandidateSet::CandidateSetKind Kind) {
   // Define viable functions to be better candidates than non-viable
   // functions.
-    overload_debug::logger<<"isBetterOverloadCandidate( Cand1 = ";Cand1.dumpFunctionSignature();overload_debug::logger<<", Cand2 = ";Cand2.dumpFunctionSignature();overload_debug::logger<<" )\n";
-    overload_debug::logger<<"Cand1 is "<<(Cand1.Viable?"viable\n":"not viable\n");
-    overload_debug::logger<<"Cand2 is "<<(Cand2.Viable?"viable\n":"not viable\n");
-    if (!Cand2.Viable){
+    atCompareOverloadBegin(S.OverloadCallbacks,S,Loc,Cand1,Cand2);
+    if (!Cand2.Viable){//TODO reorder so 1 less if
       if (Cand1.Viable){
-        overload_debug::logger<<"Cand1 is Viable and Cand2 is not Viable, so Cand1 is better\n";
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::viability);
         return true;
       }else{
-        overload_debug::logger<<"Cand1 is not Viable and Cand2 is not Viable, so Cand1 is not better\n";
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::viability);
         return false;
       }
     } else if (!Cand1.Viable){
-	overload_debug::logger<<"Cand1 is not Viable and Cand2 is Viable, so Cand1 is not better\n";
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::viability);
 	return false;
-    }else {
-	overload_debug::logger<<"Cand1 is Viable and Cand2 is Viable, so we don't know which is better\n";
     }
     
 
@@ -9997,6 +9993,8 @@ bool clang::isBetterOverloadCandidate(
 
   // Define functions that don't require ill-formed conversions for a given
   // argument to be better candidates than functions that do.
+
+//reason bettterConversion?
   unsigned NumArgs = Cand1.Conversions.size();
   assert(Cand2.Conversions.size() == NumArgs && "Overload candidate mismatch");
   bool HasBetterConversion = false;
@@ -10004,17 +10002,17 @@ bool clang::isBetterOverloadCandidate(
     bool Cand1Bad = IsIllFormedConversion(Cand1.Conversions[ArgIdx]);
     bool Cand2Bad = IsIllFormedConversion(Cand2.Conversions[ArgIdx]);
     if (Cand1Bad != Cand2Bad) {
-      if (Cand1Bad)
+      if (Cand1Bad){
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::bettterConversion);
         return false;
+      }
       HasBetterConversion = true;
     }
   }
 
   if (HasBetterConversion){
-    overload_debug::logger<<"Cand1 has better conversion, so Cand1 is better \n";
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::bettterConversion);
     return true;
-  }else{
-    overload_debug::logger<<"Cand1 doesn't have better conversion, so we don't know which is better\n";
   }
 
   // C++ [over.match.best]p1:
@@ -10023,13 +10021,11 @@ bool clang::isBetterOverloadCandidate(
   //   conversion sequence than ICSi(F2), and then...
   bool HasWorseConversion = false;
   for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx) {
-    overload_debug::logger<<"Implicit argument conversion sequences in argument "<<ArgIdx<<": ";
     switch (CompareImplicitConversionSequences(S, Loc,
                                                Cand1.Conversions[ArgIdx],
                                                Cand2.Conversions[ArgIdx])) {
     case ImplicitConversionSequence::Better:
       // Cand1 has a better conversion sequence.
-      overload_debug::logger<<"Cand1 has better implicit conversion sequence, but we don't know which is better\n";
       HasBetterConversion = true;
       break;
 
@@ -10050,19 +10046,18 @@ bool clang::isBetterOverloadCandidate(
         // with a reversed form that is written in the same way.
         //
         // We diagnose this as an extension from CreateOverloadedBinOp.
-	overload_debug::logger<<"Special case for c++20-s ==\n";
+	//overload_debug::logger<<"Special case for c++20-s ==\n";
 	//TODO HBI better message for this case
         HasWorseConversion = true;
         break;
       }
 
       // Cand1 can't be better than Cand2.
-      overload_debug::logger<<"Cand1 has worse implicit conversion sequence, so Cand1 is not better\n";
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::betterConversion);
       return false;
 
     case ImplicitConversionSequence::Indistinguishable:
       // Do nothing.
-      overload_debug::logger<<"implicit conversion sequence is indistinguishable, so we don't know which is better\n";
       break;
     }
   }
@@ -10070,10 +10065,8 @@ bool clang::isBetterOverloadCandidate(
   //    -- for some argument j, ICSj(F1) is a better conversion sequence than
   //       ICSj(F2), or, if not that,
   if (HasBetterConversion && !HasWorseConversion){
-    overload_debug::logger<<"Cand1 has better conversion, so Cand1 is better \n";
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::betterConversion);
     return true;
-  }else{
-    overload_debug::logger<<"Cand1 doesn't have better conversion, so we don't know which is better\n";
   }
 
   //   -- the context is an initialization by user-defined conversion
@@ -10086,7 +10079,7 @@ bool clang::isBetterOverloadCandidate(
       Cand1.Function && Cand2.Function &&
       isa<CXXConversionDecl>(Cand1.Function) &&
       isa<CXXConversionDecl>(Cand2.Function)) {
-    overload_debug::logger<<"We are in an initialization by user-defined conversion: ";
+    //overload_debug::logger<<"We are in an initialization by user-defined conversion: ";
     // First check whether we prefer one of the conversion functions over the
     // other. This only distinguishes the results in non-standard, extension
     // cases such as the conversion from a lambda closure type to a function
@@ -10098,13 +10091,13 @@ bool clang::isBetterOverloadCandidate(
                                                   Cand1.FinalConversion,
                                                   Cand2.FinalConversion);
     if (Result == ImplicitConversionSequence::Worse){
-      overload_debug::logger<<"Cand1 has worse standard conversion sequence, so Cand1 is not better\n";
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::bettterImplicitConversion);
+
       return false;
     }else if (Result == ImplicitConversionSequence::Better){
-      overload_debug::logger<<"Cand1 has better standard conversion sequence, so Cand1 is better\n";
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::bettterImplicitConversion);
       return true;
-    }else
-      overload_debug::logger<<"standard conversion sequence is indistinguishable, so we don't know which is better\n";
+    }
     //if (Result != ImplicitConversionSequence::Indistinguishable)
     //  return Result == ImplicitConversionSequence::Better;
 
@@ -10121,20 +10114,16 @@ bool clang::isBetterOverloadCandidate(
   // a conversion function.  
   if (Kind == OverloadCandidateSet::CSK_InitByConstructor && NumArgs == 1 &&
       Cand1.Function && Cand2.Function){
-      overload_debug::logger<<"We are in an initialization by constructor: ";
+      //overload_debug::logger<<"We are in an initialization by constructor: ";
       if (isa<CXXConstructorDecl>(Cand1.Function) !=
           isa<CXXConstructorDecl>(Cand2.Function)){
         if (isa<CXXConstructorDecl>(Cand1.Function)){
-          overload_debug::logger<<"Cand1 is a constructor, Cand2 is not a constructor, so Cand1 is better\n";
+      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::constructor);
           return true;
         }else{
-          overload_debug::logger<<"Cand1 is not a constructor, Cand2 is a constructor, so Cand1 is not better\n";
+      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::constructor);
           return false;
         }
-      }else if (isa<CXXConstructorDecl>(Cand1.Function)){
-        overload_debug::logger<<"Cand1 is a constructor, Cand2 is a constructor, so we don't know, which is better\n";
-      }else{
-        overload_debug::logger<<"Cand1 is not a constructor, Cand2 is not a constructor, so we don't know, which is better\n";
       }
   }
 
@@ -10146,14 +10135,12 @@ bool clang::isBetterOverloadCandidate(
                                Cand2.Function->getPrimaryTemplate();
   if (Cand1IsSpecialization != Cand2IsSpecialization){
     if (Cand2IsSpecialization){
-        overload_debug::logger<<"Cand1 is not a specialization, Cand2 is a specialization, so Cand1 is better\n";
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::isSpecialization);
         return true;
     }else{
-        overload_debug::logger<<"Cand1 is a specialization, Cand2 is not a specialization, so Cand1 is not better\n";
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::isSpecialization);
         return false;
     }
-  }else if (!Cand2IsSpecialization){
-        overload_debug::logger<<"Cand1 is not a specialization, Cand2 is not a specialization, so we don't know, which is better\n";
   }
 
   //   -- F1 and F2 are function template specializations, and the function
@@ -10161,7 +10148,6 @@ bool clang::isBetterOverloadCandidate(
   //      according to the partial ordering rules described in 14.5.5.2, or,
   //      if not that,
   if (Cand1IsSpecialization && Cand2IsSpecialization) {
-    overload_debug::logger<<"Cand1 is a specialization, Cand2 is a specialization: ";
     if (FunctionTemplateDecl *BetterTemplate = S.getMoreSpecializedTemplate(
             Cand1.Function->getPrimaryTemplate(),
             Cand2.Function->getPrimaryTemplate(), Loc,
@@ -10170,14 +10156,12 @@ bool clang::isBetterOverloadCandidate(
             Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
             Cand1.isReversed() ^ Cand2.isReversed())){
       if (BetterTemplate == Cand1.Function->getPrimaryTemplate()){
-        overload_debug::logger<<"Cand1 is more specialized, so Cand1 is better\n";
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::moreSpecialized);
         return true;
       }else{
-        overload_debug::logger<<"Cand2 is more specialized, so Cand1 is not better\n";
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::moreSpecialized);
         return false;
       }
-    }else{
-        overload_debug::logger<<"neither is more specialized, so we don't know which is better\n";
     }
 
   }
@@ -10201,12 +10185,13 @@ bool clang::isBetterOverloadCandidate(
                                    AtLeastAsConstrained1) ||
           S.IsAtLeastAsConstrained(Function2, RC2, Function1, RC1,
                                    AtLeastAsConstrained2))
-        overload_debug::logger<<"Cand2 is more specialized, so Cand1 is not better\n";
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::moreSpecialized);
         return false;
       if (AtLeastAsConstrained1 != AtLeastAsConstrained2)
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,AtLeastAsConstrained1,BetterOverloadCandidateReason::moreSpecialized);
         return AtLeastAsConstrained1;
     } else if (RC1 || RC2) {
-      overload_debug::logger<<"Cand"<<(RC1?'1':'2')<<" is more specialized, so Cand1 is"<<(RC1?"":" not")<<" better\n";
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,RC1!=nullptr,BetterOverloadCandidateReason::moreSpecialized);
       return RC1 != nullptr;
     }
   }
@@ -10220,9 +10205,7 @@ bool clang::isBetterOverloadCandidate(
   bool Cand2IsInherited =
       isa_and_nonnull<ConstructorUsingShadowDecl>(Cand2.FoundDecl.getDecl());
   if (Cand1IsInherited != Cand2IsInherited){
-    overload_debug::logger<<(Cand2IsInherited?
-	"Cand1 is not inherited, Cand2 is inherited, so Cand1 is better\n":
-	"Cand1 is inherited, Cand2 is not inherited, so Cand1 is not better\n");
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand2IsInherited,BetterOverloadCandidateReason::isInherited);
     return Cand2IsInherited;
   }
   else if (Cand1IsInherited) {
@@ -10230,16 +10213,15 @@ bool clang::isBetterOverloadCandidate(
     auto *Cand1Class = cast<CXXRecordDecl>(Cand1.Function->getDeclContext());
     auto *Cand2Class = cast<CXXRecordDecl>(Cand2.Function->getDeclContext());
     if (Cand1Class->isDerivedFrom(Cand2Class)){
-      overload_debug::logger<<"Class of Cand1 is derived from Class of Cand2, so Cand1 is better\n";
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::derivedFromOther);
       return true;
     }
     if (Cand2Class->isDerivedFrom(Cand1Class)){
-      overload_debug::logger<<"Class of Cand2 is derived from Class of Cand1, so Cand1 is not better\n";
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::derivedFromOther);
       return false;
     }
     // Inherited from sibling base classes: still ambiguous.
-  }else
-    overload_debug::logger<<"Cand1 is not inherited, Cand2 is not inherited, so we don't know which is better\n";
+  }
 
   //   -- F2 is a rewritten candidate (12.4.1.2) and F1 is not
   //   -- F1 and F2 are rewritten candidates, and F2 is a synthesized candidate
@@ -10248,8 +10230,10 @@ bool clang::isBetterOverloadCandidate(
   // We rank reversed + different operator as worse than just reversed, but
   // that comparison can never happen, because we only consider reversing for
   // the maximally-rewritten operator (== or <=>).
-  if (Cand1.RewriteKind != Cand2.RewriteKind)
+  if (Cand1.RewriteKind != Cand2.RewriteKind){
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand1.RewriteKind < Cand2.RewriteKind,BetterOverloadCandidateReason::RewriteKind);
     return Cand1.RewriteKind < Cand2.RewriteKind;
+  }
 
   // Check C++17 tie-breakers for deduction guides.
   {
@@ -10258,20 +10242,15 @@ bool clang::isBetterOverloadCandidate(
     if (Guide1 && Guide2) {
       //  -- F1 is generated from a deduction-guide and F2 is not
       if (Guide1->isImplicit() != Guide2->isImplicit()){
-          overload_debug::logger<<(Guide2->isImplicit()?
-	    "Cand1 is explicitly written, Cand2 is implicitly generated, so Cand1 is better\n":
-	    "Cand1 is implicitly generated, Cand2 is explicitly written, so Cand1 is not better\n");
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Guide2->IsImplicit(),BetterOverloadCandidateReason::guideImplicit);
         return Guide2->isImplicit();
       }
-	overload_debug::logger<<(Guide2->isImplicit()?
-          "Cand1 is implicitly generated, Cand2 is implicitly generated, so we don't know which is better\n":
-          "Cand1 is explicitly written, Cand2 is explicitly written, so we don't know which is better\n");
       //  -- F1 is the copy deduction candidate(16.3.1.8) and F2 is not
+//HBI what if F2 is copy deduction???
       if (Guide1->getDeductionCandidateKind() == DeductionCandidate::Copy){
-        overload_debug::logger<<"Cand1 is copy deduction candidate, so Cand1 is better\n";
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::guideCopy);
         return true;
       }
-      overload_debug::logger<<"Cand1 is not copy deduction candidate, so we don't know which is better\n";
     }
   }
 
@@ -10279,11 +10258,9 @@ bool clang::isBetterOverloadCandidate(
   if (Cand1.Function && Cand2.Function) {
     Comparison Cmp = compareEnableIfAttrs(S, Cand1.Function, Cand2.Function);
     if (Cmp != Comparison::Equal){
-        overload_debug::logger<<((Cmp == Comparison::Better)?"compareEnableIfAttrs tells Cand1 is better\n":
-        "compareEnableIfAttrs tells Cand1 is not better\n");
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cmp==Comparison::Better,BetterOverloadCandidateReason::enableIf);
       return Cmp == Comparison::Better;
     }
-    overload_debug::logger<<"compareEnableIfAttrs tells Cand1 and Cand2 are equal, so we don't know which is better\n";
   }
 
   bool HasPS1 = Cand1.Function != nullptr &&
@@ -10292,27 +10269,21 @@ bool clang::isBetterOverloadCandidate(
                 functionHasPassObjectSizeParams(Cand2.Function);
   if (HasPS1 != HasPS2){
       if (HasPS1){
-        overload_debug::logger<<"Cand1 has parameters passed with object size, Cand2 does not have parameters passed with object size, so Cand1 is better\n";
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::parameterObjectSize);
 	return true;
-      }else
-      overload_debug::logger<<"Cand1 does not have parameters passed with object size, Cand2 has parameters passed with object size, so we don't know which is better\n";
-  }else if (HasPS1) {
-      overload_debug::logger<<"Cand1 has parameters passed with object size, Cand2 has parameters passed with object size, so we don't know which is better\n";
-    }else{
-      overload_debug::logger<<"Cand1 does not have parameters passed with object size, Cand2 does not have parameters passed with object size, so we don't know which is better\n";
-    }
+      }//else???
+  }
 
 
   auto MV = isBetterMultiversionCandidate(Cand1, Cand2);
   if (MV == Comparison::Better){
-    overload_debug::logger<<"isBetterMultiversionCandidate tells Cand1 is better\n";
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::multiversion);
     return true;
   }
   if (MV == Comparison::Worse){
-    overload_debug::logger<<"isBetterMultiversionCandidate tells Cand1 not better\n";
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::multiversion);
     return false;
   }
-overload_debug::logger<<"isBetterMultiversionCandidate tells Cand1 and Cand2 are equal, so we don't know which is better\n";
 
   // If other rules cannot determine which is better, CUDA preference is used
   // to determine which is better.
@@ -10320,8 +10291,7 @@ overload_debug::logger<<"isBetterMultiversionCandidate tells Cand1 and Cand2 are
     FunctionDecl *Caller = S.getCurFunctionDecl(/*AllowLambda=*/true);
     bool res=S.IdentifyCUDAPreference(Caller, Cand1.Function) >
            S.IdentifyCUDAPreference(Caller, Cand2.Function);
-    overload_debug::logger<<(res?"IdentifyCUDAPReference tells Cand1 is better\n":
-      "IdentifyCUDAPReference tells Cand1 is not better\n");
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,res,BetterOverloadCandidateReason::CUDApreference);
     return res;
   }
 
@@ -10335,15 +10305,17 @@ overload_debug::logger<<"isBetterMultiversionCandidate tells Cand1 and Cand2 are
     LangAS AS1 = CD1->getMethodQualifiers().getAddressSpace();
     LangAS AS2 = CD2->getMethodQualifiers().getAddressSpace();
     if (AS1 != AS2) {
-      if (Qualifiers::isAddressSpaceSupersetOf(AS2, AS1))
+      if (Qualifiers::isAddressSpaceSupersetOf(AS2, AS1)){
+  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::addressSpace);
         return true;
-      if (Qualifiers::isAddressSpaceSupersetOf(AS2, AS1))
+      }
+      if (Qualifiers::isAddressSpaceSupersetOf(AS1, AS2)){
+  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::addressSpace);
         return false;
+      }
     }
   }
-  //TODO HBI Report to clang and write an output 
-
-  overload_debug::logger<<"isBetterOverloadCandidate reached it's end uncoclusively\n";
+  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::inconclusive);
   return false;
 }
 
