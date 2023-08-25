@@ -10,16 +10,20 @@
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/Decl.h"
 #include "clang/Basic/FileManager.h"
+#include "clang/Basic/LangOptions.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/Module.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Frontend/ASTConsumers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/MultiplexConsumer.h"
+#include "clang/Frontend/OvdlFilter.h"
 #include "clang/Frontend/Utils.h"
 #include "clang/Lex/DependencyDirectivesScanner.h"
 #include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/Lexer.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/TemplateInstCallback.h"
@@ -37,6 +41,7 @@
 #include <memory>
 #include <optional>
 #include <system_error>
+#include <iostream> //elvivendő!!!
 
 using namespace clang;
 
@@ -321,7 +326,8 @@ void VerifyPCHAction::ExecuteAction() {
 namespace {
 struct OvdlCandEntry{
   std::string declLocation;
-  std::string signature;
+  std::string nameSignature;
+  bool Viable;
   //std::string Concepts; ???
 };
 struct OvdlCompareEntry {
@@ -334,17 +340,55 @@ struct OvdlCompareEntry {
 struct OvdlResEntry{
   std::vector<OvdlCandEntry> candidates;
   OvdlCandEntry best;
+  OvdlCandEntry problem;
   std::vector<OvdlCompareEntry> compares;
   std::string callLocation;
   std::string callSignature;
+};
+struct OvdlResNode{
+  OvdlResEntry Entry;
+  size_t line;
+  std::string Fname;
+};
+class OvdlResCont{
+  std::vector<OvdlResNode> data;
+public:
+  OvdlFilterSettings filterSettings;
+  using iterator=std::vector<OvdlResNode>::iterator;
+  iterator begin() { return data.begin();}
+  iterator end() { return data.end();}
+  OvdlResCont filterByLine(int lineBeg=-1, int lineEnd=-1) const{
+    if (lineEnd==-1) lineEnd=lineBeg+1;
+    if (lineBeg==-1) return *this; 
+    return filterByFun([lineBeg,lineEnd](OvdlResNode& x){
+      return !((unsigned)lineBeg<= x.line && (unsigned)lineEnd> x.line);
+    });
+  }
+  OvdlResCont filter() const{
+    return filterByFun([this](const OvdlResNode& x){
+      return !(x.line>=filterSettings.lineFrom && x.line<filterSettings.lineTo &&
+        (filterSettings.Fname=="" || filterSettings.Fname==x.Fname) && 
+	(filterSettings.printEmpty || !x.Entry.candidates.empty()));
+    });
+  }
+  template<class Callable>
+  OvdlResCont filterByFun(Callable Fun) const{
+    OvdlResCont res(*this);
+    res.data.erase(std::remove_if(res.data.begin(),res.data.end(),Fun),res.data.end());
+    return res;
+  }
+
+  void add(const OvdlResNode& newnode){
+    data.push_back(newnode);
+  }
 };
 } // namespace
 namespace llvm{
 namespace yaml{
 template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
+    io.mapRequired("Name and signature",fields.nameSignature);
     io.mapRequired("declLocation",fields.declLocation);
-    io.mapRequired("signature",fields.signature);
   }
 };
 template <> struct MappingTraits<OvdlCompareEntry>{
@@ -379,45 +423,189 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapRequired("callLocation",fields.callLocation);
     io.mapRequired("callSignature",fields.callSignature);
     io.mapRequired("candidates",fields.candidates);
-    io.mapRequired("best",fields.best);
+    io.mapOptional("best",fields.best);
+    io.mapOptional("problem",fields.problem);
     io.mapRequired("compares",fields.compares);
   }
 };
 
-}//namespace clang
+}//namespace yaml
 }//namespace llvm
 namespace{
-  class DefaultOverloadInstCallback:public OverloadCallback{
-    public:
-    virtual void initialize(const Sema&) override{};
-    virtual void finalize(const Sema&) override{};
-    virtual void atOverloadBegin(const Sema&S,const SourceLocation& Loc) override{
-    }
-    virtual void atOverloadEnd(const Sema&S,const SourceLocation& Loc) override{
-      displayOvdlResEntry(llvm::outs(),S,Loc);
-    }
-  static OvdlResEntry getResEntry(const Sema& S,const SourceLocation &Loc){
-    OvdlResEntry re;
-    /*for (const auto& c:S.MethodPool){
-      re.candidates.push_back({c.getSourceLocation,c.getSignature});
-    }*/
-    re.callLocation=Loc.printToString(S.SourceMgr);
-    return re;
+std::string toString(BetterOverloadCandidateReason r){
+  switch(r){
+    case viability:
+    return "viability";
+  case betterConversion:
+    return "betterConversion";
+  case betterImplicitConversion:
+    return "betterImplicitConversion";
+  case constructor:
+    return "constructor";
+  case isSpecialization:
+    return "isSpecialization";
+  case moreSpecialized:
+    return "moreSpecialized";
+  case isInherited:
+    return "isInherited";
+  case derivedFromOther:
+    return "derivedFromOther";
+  case RewriteKind:
+    return "RewriteKind";
+  case guideImplicit:
+    return "guideImplicit";
+  case guideCopy:
+    return "guideCopy";
+  case enableIf:
+    return "enableIf";
+  case parameterObjectSize:
+    return "parameterObjectSize";
+  case multiversion:
+    return "multiversion";
+  case CUDApreference:
+    return "CUDApreference";
+  case addressSpace:
+    return "addressSpace";
+  case inconclusive:
+    return "inconclusive";
+  };
+  return "";//UNREACHABLE
+};
+void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
+  std::string YAML;
+  {
+    llvm::raw_string_ostream OS(YAML);
+    llvm::yaml::Output YO(OS);
+    llvm::yaml::EmptyContext Context;
+    llvm::yaml::yamlize(YO,Entry,true,Context);
   }
-  static void displayOvdlResEntry(llvm::raw_ostream& Out, const Sema& TheSema,
-	const SourceLocation &Loc){
-    std::string YAML;
-    {
-      llvm::raw_string_ostream OS(YAML);
-      llvm::yaml::Output YO(OS);
-      OvdlResEntry Entry=getResEntry(TheSema,Loc);
-      llvm::yaml::EmptyContext Context;
-      llvm::yaml::yamlize(YO,Entry,true,Context);
+  Out<<"-+-+-"<<YAML<<"\n";
+}
+
+
+class DefaultOverloadInstCallback:public OverloadCallback{
+  const Sema* S=nullptr;
+  const OverloadCandidateSet* Set=nullptr;
+  const SourceLocation* Loc=nullptr;
+  std::vector<OvdlCompareEntry> compares;
+  OvdlResCont cont;
+public:
+  virtual void initialize(const Sema&) override{};
+  virtual void finalize(const Sema&) override{};
+  virtual void atEnd() override{
+    std::string message;
+    do {
+
+      llvm::outs()<<"What filter do you want to change? ('none' for none, 'exit' for exsiting)\n";
+      std::cin>>message;
+      if (message=="exit"){
+	break;
+      }else if (message=="Fname"){
+	std::cin>>cont.filterSettings.Fname;
+      }else if (message=="printEmpty"){
+	std::cin>>cont.filterSettings.printEmpty;
+      } else if (message=="lineFrom"){
+	std::cin>>cont.filterSettings.lineFrom;
+      } else if (message=="lineTo"){
+	std::cin>>cont.filterSettings.lineTo;
+      }else if (message=="none"){
+        for (auto& x:cont.filter()){
+	  displayOvdlResEntry(llvm::outs(),x.Entry);
+        }
+      }else{
+	      llvm::outs()<<"invalid\n";
+      }
+    }while (message!="exit");
+  }
+  virtual void atOverloadBegin(const Sema&s,const SourceLocation& loc,const OverloadCandidateSet& set) override{
+    S=&s;
+    Set=&set;
+    Loc=&loc;
+  }
+  virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
+		const OverloadCandidateSet& set, OverloadingResult res, 
+		const OverloadCandidate* BestOrProblem) override{
+    //TOFIX
+    OvdlResNode node;
+    node.Entry=getResEntry(res,BestOrProblem);
+    node.Entry.compares=std::move(compares);
+    compares={};
+    node.line=S->getSourceManager().getPresumedLoc(loc).getLine();
+    node.Fname=S->getSourceManager().getPresumedLoc(loc).getFilename();
+    cont.add(node);
+    S=nullptr;
+    Set=nullptr;
+    Loc=nullptr;
+  }
+  virtual void atCompareOverloadBegin(const Sema& TheSema,const SourceLocation& Loc,
+		const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)override{
+  }
+  virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
+		const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason) override {
+    OvdlCompareEntry Entry;
+    Entry.C1Better=res;
+    Entry.C1=getCandEntry(&Cand1);
+    Entry.C2=getCandEntry(&Cand2);
+    Entry.reason=toString(reason);
+    compares.push_back(Entry);
+  }
+  OvdlCandEntry getCandEntry(const OverloadCandidate* C){
+    if (C==nullptr)
+      return {};
+    OvdlCandEntry res;
+    res.Viable=C->Viable;
+    if (C->FoundDecl.getDecl()==0) {
+      if (C->IsSurrogate){
+        res.declLocation="Surrogate ";
+	res.declLocation+=C->Surrogate->getLocation().printToString(S->SourceMgr);
+	return res;
+      }
+      res.declLocation="Built-in";
+      for (const auto& tmp:C->BuiltinParamTypes){
+	if (tmp.getAsString()!="NULL TYPE")
+      		res.nameSignature+=tmp.getAsString()+" ";
+      }
+      return res;
     }
-    Out<<"-+-+-"<<YAML<<"\n";
+    res.declLocation=C->FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
+    //res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
+    res.nameSignature=C->FoundDecl.getDecl()->getQualifiedNameAsString();
+    if (C->Function){
+      res.nameSignature+=" - "+getSignature(*C->Function);
+    }else{/*TODO can't reach???*/}
+    return res;
+  }
+  //MOVE TO FunctionDecl
+  std::string getSignature(const FunctionDecl& f) const{
+    std::string res=f.getType().getAsString();
+      if (auto const * X=f.getPrimaryTemplate()){
+	res+="\tSpecioalization of "+getSignature(*X->getTemplatedDecl());
+      }
+    return res;
+  }
+  OvdlResEntry getResEntry(OverloadingResult ovres, const OverloadCandidate* BestOrProblem){
+    OvdlResEntry res;
+
+    if (ovres==OR_Success) {
+      res.best=getCandEntry(BestOrProblem);
+      res.problem={};
+    }else{
+      res.best={};
+      res.problem=getCandEntry(BestOrProblem);
+    }
+    res.callLocation=Loc->printToString(S->SourceMgr);
+    SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,S->getSourceManager() , S->getLangOpts()));
+    CharSourceRange range=CharSourceRange::getCharRange(*Loc,endloc);
+    res.callSignature=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
+    S->getSourceManager();
+    
+    for (const auto& cand:*Set){
+      res.candidates.push_back(getCandEntry(&cand));
+    }
+    return res;
   }
   };
-}//namespace;
+}//namespace
 std::unique_ptr<ASTConsumer>
 OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
     return std::make_unique<ASTConsumer>();

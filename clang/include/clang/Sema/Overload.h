@@ -1140,6 +1140,10 @@ class Sema;
     void clear(CandidateSetKind CSK);
 
     using iterator = SmallVectorImpl<OverloadCandidate>::iterator;
+    using const_iterator = SmallVectorImpl<OverloadCandidate>::const_iterator;
+
+    const_iterator begin()const { return Candidates.begin(); }
+    const_iterator end()const { return Candidates.end(); }
 
     iterator begin() { return Candidates.begin(); }
     iterator end() { return Candidates.end(); }

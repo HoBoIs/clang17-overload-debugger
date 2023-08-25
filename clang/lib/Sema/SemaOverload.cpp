@@ -20,7 +20,7 @@
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeOrdering.h"
-#include "clang/Sema/OverLogger.h"
+#include "clang/Sema/OverLogger.h"//TODO remove
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/OperatorKinds.h"
@@ -4749,6 +4749,7 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
                          QualType DeclType, SourceLocation DeclLoc,
                          Expr *Init, QualType T2, bool AllowRvalues,
                          bool AllowExplicit) {
+	this;
   assert(T2->isRecordType() && "Can only find conversions of record types.");
   auto *T2RecordDecl = cast<CXXRecordDecl>(T2->castAs<RecordType>()->getDecl());
 
@@ -9886,17 +9887,13 @@ bool clang::isBetterOverloadCandidate(
   // Define viable functions to be better candidates than non-viable
   // functions.
     atCompareOverloadBegin(S.OverloadCallbacks,S,Loc,Cand1,Cand2);
-    if (!Cand2.Viable){//TODO reorder so 1 less if
-      if (Cand1.Viable){
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::viability);
-        return true;
-      }else{
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::viability);
+    if (!Cand1.Viable){
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,viability);
         return false;
-      }
-    } else if (!Cand1.Viable){
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::viability);
-	return false;
+    }
+    if (!Cand2.Viable){//TODO reorder so 1 less if
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,viability);
+        return true;
     }
     
 
@@ -9994,7 +9991,7 @@ bool clang::isBetterOverloadCandidate(
   // Define functions that don't require ill-formed conversions for a given
   // argument to be better candidates than functions that do.
 
-//reason bettterConversion?
+//reason betterConversion?
   unsigned NumArgs = Cand1.Conversions.size();
   assert(Cand2.Conversions.size() == NumArgs && "Overload candidate mismatch");
   bool HasBetterConversion = false;
@@ -10003,7 +10000,7 @@ bool clang::isBetterOverloadCandidate(
     bool Cand2Bad = IsIllFormedConversion(Cand2.Conversions[ArgIdx]);
     if (Cand1Bad != Cand2Bad) {
       if (Cand1Bad){
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::bettterConversion);
+    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterConversion);
         return false;
       }
       HasBetterConversion = true;
@@ -10011,7 +10008,7 @@ bool clang::isBetterOverloadCandidate(
   }
 
   if (HasBetterConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::bettterConversion);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterConversion);
     return true;
   }
 
@@ -10053,7 +10050,7 @@ bool clang::isBetterOverloadCandidate(
       }
 
       // Cand1 can't be better than Cand2.
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::betterConversion);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterConversion);
       return false;
 
     case ImplicitConversionSequence::Indistinguishable:
@@ -10065,7 +10062,7 @@ bool clang::isBetterOverloadCandidate(
   //    -- for some argument j, ICSj(F1) is a better conversion sequence than
   //       ICSj(F2), or, if not that,
   if (HasBetterConversion && !HasWorseConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::betterConversion);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterConversion);
     return true;
   }
 
@@ -10091,11 +10088,11 @@ bool clang::isBetterOverloadCandidate(
                                                   Cand1.FinalConversion,
                                                   Cand2.FinalConversion);
     if (Result == ImplicitConversionSequence::Worse){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::bettterImplicitConversion);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterImplicitConversion);
 
       return false;
     }else if (Result == ImplicitConversionSequence::Better){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::bettterImplicitConversion);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterImplicitConversion);
       return true;
     }
     //if (Result != ImplicitConversionSequence::Indistinguishable)
@@ -10118,10 +10115,10 @@ bool clang::isBetterOverloadCandidate(
       if (isa<CXXConstructorDecl>(Cand1.Function) !=
           isa<CXXConstructorDecl>(Cand2.Function)){
         if (isa<CXXConstructorDecl>(Cand1.Function)){
-      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::constructor);
+      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,constructor);
           return true;
         }else{
-      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::constructor);
+      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,constructor);
           return false;
         }
       }
@@ -10135,10 +10132,10 @@ bool clang::isBetterOverloadCandidate(
                                Cand2.Function->getPrimaryTemplate();
   if (Cand1IsSpecialization != Cand2IsSpecialization){
     if (Cand2IsSpecialization){
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::isSpecialization);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,isSpecialization);
         return true;
     }else{
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::isSpecialization);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,isSpecialization);
         return false;
     }
   }
@@ -10156,10 +10153,10 @@ bool clang::isBetterOverloadCandidate(
             Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
             Cand1.isReversed() ^ Cand2.isReversed())){
       if (BetterTemplate == Cand1.Function->getPrimaryTemplate()){
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,moreSpecialized);
         return true;
       }else{
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,moreSpecialized);
         return false;
       }
     }
@@ -10185,13 +10182,13 @@ bool clang::isBetterOverloadCandidate(
                                    AtLeastAsConstrained1) ||
           S.IsAtLeastAsConstrained(Function2, RC2, Function1, RC1,
                                    AtLeastAsConstrained2))
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,moreSpecialized);
         return false;
       if (AtLeastAsConstrained1 != AtLeastAsConstrained2)
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,AtLeastAsConstrained1,BetterOverloadCandidateReason::moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,AtLeastAsConstrained1,moreSpecialized);
         return AtLeastAsConstrained1;
     } else if (RC1 || RC2) {
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,RC1!=nullptr,BetterOverloadCandidateReason::moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,RC1!=nullptr,moreSpecialized);
       return RC1 != nullptr;
     }
   }
@@ -10205,7 +10202,7 @@ bool clang::isBetterOverloadCandidate(
   bool Cand2IsInherited =
       isa_and_nonnull<ConstructorUsingShadowDecl>(Cand2.FoundDecl.getDecl());
   if (Cand1IsInherited != Cand2IsInherited){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand2IsInherited,BetterOverloadCandidateReason::isInherited);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand2IsInherited,isInherited);
     return Cand2IsInherited;
   }
   else if (Cand1IsInherited) {
@@ -10213,11 +10210,11 @@ bool clang::isBetterOverloadCandidate(
     auto *Cand1Class = cast<CXXRecordDecl>(Cand1.Function->getDeclContext());
     auto *Cand2Class = cast<CXXRecordDecl>(Cand2.Function->getDeclContext());
     if (Cand1Class->isDerivedFrom(Cand2Class)){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::derivedFromOther);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,derivedFromOther);
       return true;
     }
     if (Cand2Class->isDerivedFrom(Cand1Class)){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::derivedFromOther);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,derivedFromOther);
       return false;
     }
     // Inherited from sibling base classes: still ambiguous.
@@ -10231,7 +10228,7 @@ bool clang::isBetterOverloadCandidate(
   // that comparison can never happen, because we only consider reversing for
   // the maximally-rewritten operator (== or <=>).
   if (Cand1.RewriteKind != Cand2.RewriteKind){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand1.RewriteKind < Cand2.RewriteKind,BetterOverloadCandidateReason::RewriteKind);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand1.RewriteKind < Cand2.RewriteKind,RewriteKind);
     return Cand1.RewriteKind < Cand2.RewriteKind;
   }
 
@@ -10242,13 +10239,13 @@ bool clang::isBetterOverloadCandidate(
     if (Guide1 && Guide2) {
       //  -- F1 is generated from a deduction-guide and F2 is not
       if (Guide1->isImplicit() != Guide2->isImplicit()){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Guide2->IsImplicit(),BetterOverloadCandidateReason::guideImplicit);
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Guide2->isImplicit(),guideImplicit);
         return Guide2->isImplicit();
       }
       //  -- F1 is the copy deduction candidate(16.3.1.8) and F2 is not
 //HBI what if F2 is copy deduction???
       if (Guide1->getDeductionCandidateKind() == DeductionCandidate::Copy){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::guideCopy);
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,guideCopy);
         return true;
       }
     }
@@ -10258,7 +10255,7 @@ bool clang::isBetterOverloadCandidate(
   if (Cand1.Function && Cand2.Function) {
     Comparison Cmp = compareEnableIfAttrs(S, Cand1.Function, Cand2.Function);
     if (Cmp != Comparison::Equal){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cmp==Comparison::Better,BetterOverloadCandidateReason::enableIf);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cmp==Comparison::Better,enableIf);
       return Cmp == Comparison::Better;
     }
   }
@@ -10269,7 +10266,7 @@ bool clang::isBetterOverloadCandidate(
                 functionHasPassObjectSizeParams(Cand2.Function);
   if (HasPS1 != HasPS2){
       if (HasPS1){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::parameterObjectSize);
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,parameterObjectSize);
 	return true;
       }//else???
   }
@@ -10277,11 +10274,11 @@ bool clang::isBetterOverloadCandidate(
 
   auto MV = isBetterMultiversionCandidate(Cand1, Cand2);
   if (MV == Comparison::Better){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::multiversion);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,multiversion);
     return true;
   }
   if (MV == Comparison::Worse){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::multiversion);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,multiversion);
     return false;
   }
 
@@ -10291,7 +10288,7 @@ bool clang::isBetterOverloadCandidate(
     FunctionDecl *Caller = S.getCurFunctionDecl(/*AllowLambda=*/true);
     bool res=S.IdentifyCUDAPreference(Caller, Cand1.Function) >
            S.IdentifyCUDAPreference(Caller, Cand2.Function);
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,res,BetterOverloadCandidateReason::CUDApreference);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,res,CUDApreference);
     return res;
   }
 
@@ -10306,16 +10303,16 @@ bool clang::isBetterOverloadCandidate(
     LangAS AS2 = CD2->getMethodQualifiers().getAddressSpace();
     if (AS1 != AS2) {
       if (Qualifiers::isAddressSpaceSupersetOf(AS2, AS1)){
-  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,BetterOverloadCandidateReason::addressSpace);
+  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,addressSpace);
         return true;
       }
       if (Qualifiers::isAddressSpaceSupersetOf(AS1, AS2)){
-  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::addressSpace);
+  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,addressSpace);
         return false;
       }
     }
   }
-  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,BetterOverloadCandidateReason::inconclusive);
+  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,inconclusive);
   return false;
 }
 
@@ -10407,10 +10404,11 @@ OverloadingResult
 OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
                                          iterator &Best) {
 
-  atOverloadBegin(S.OverloadCallbacks,S,Loc);
+  atOverloadBegin(S.OverloadCallbacks,S,Loc,*this);
+static int cnt=0;
+llvm::errs()<<(++cnt)<<" ";
 
   llvm::SmallVector<OverloadCandidate *, 16> Candidates;
-  overload_debug::logger<<"BestViableFunction is called\n The candidates are:\n";
   std::transform(begin(), end(), std::back_inserter(Candidates),
                  [](OverloadCandidate &Cand) { return &Cand; });
 
@@ -10444,24 +10442,12 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
       llvm::erase_if(Candidates, IsWrongSideCandidate);
     }
   }
-  for(auto *Cand: Candidates){
-    Cand->dumpFunctionSignature();overload_debug::logger<<"\n";
-  }
-  overload_debug::logger<<"end of candidates\n";
   // Find the best viable function.
   Best = end();
   for (auto *Cand : Candidates) {
     Cand->Best = false;
     if (Cand->Viable) {
-      if (Best == end()){
-        Cand->dumpFunctionSignature();
-        overload_debug::logger<<" is the first viable candidate\n";
-        Best = Cand;
-      }else if(isBetterOverloadCandidate(S, *Cand, *Best, Loc, Kind)){
-        Cand->dumpFunctionSignature();
-        overload_debug::logger<<" is viable and a better candidate than ";
-        Best->dumpFunctionSignature();
-        overload_debug::logger<<"\n";
+      if (Best == end() || isBetterOverloadCandidate(S, *Cand, *Best, Loc, Kind)){
         Best = Cand;
       }
     } else if (Cand->NotValidBecauseConstraintExprHasError()) {
@@ -10469,21 +10455,15 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
       // it referenced an expression that contained an error. Rather than fall
       // back onto a potentially unintended candidate (made worse by
       // subsuming constraints), treat this as 'no viable candidate'.
-      Cand->dumpFunctionSignature();
-      overload_debug::logger<<" is not a viable candidate, constraint is unevaluatable\n";
       Best = end();
-      atOverloadEnd(S.OverloadCallbacks,S,Loc);
+      atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_No_Viable_Function,&*Cand);
       return OR_No_Viable_Function;
-    }else{
-      Cand->dumpFunctionSignature();
-      overload_debug::logger<<" is not a viable candidate\n";
     }
   }
 
   // If we didn't find any viable functions, abort.
   if (Best == end()){
-    overload_debug::logger<<"There are no viable candidates\n";
-      atOverloadEnd(S.OverloadCallbacks,S,Loc);
+    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_No_Viable_Function,nullptr);
     return OR_No_Viable_Function;
   }
 
@@ -10503,14 +10483,14 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
         PendingBest.push_back(Cand);
         Cand->Best = true;
 
-        Best->dumpFunctionSignature();
-        overload_debug::logger<<" is not a better candidate than (the also viable) ";
-        Cand->dumpFunctionSignature();
+        //Best->dumpFunctionSignature();
+        //overload_debug::logger<<" is not a better candidate than (the also viable) ";
+        //Cand->dumpFunctionSignature();
         if (S.isEquivalentInternalLinkageDeclaration(Cand->Function,
                                                      Curr->Function)){
-          Cand->dumpFunctionSignature();
-          overload_debug::logger<<" is equivalent to \n";
-          Best->dumpFunctionSignature();
+          //Cand->dumpFunctionSignature();
+          //overload_debug::logger<<" is equivalent to \n";
+          //Best->dumpFunctionSignature();
           Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	}else
@@ -10521,25 +10501,19 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // If we found more than one best candidate, this is ambiguous.
   if (Best == end()){
-    overload_debug::logger<<"Ambigous best viable candidates exist\n";
-      atOverloadEnd(S.OverloadCallbacks,S,Loc);
+    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Ambiguous,nullptr);
     return OR_Ambiguous;
   }
   // Best is the best viable function.
   if (Best->Function && Best->Function->isDeleted()){
-    Best->dumpFunctionSignature();
-    overload_debug::logger<<" is the best candidate function, but it is deleted\n";
-      atOverloadEnd(S.OverloadCallbacks,S,Loc);
+    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Deleted,&*Best);
     return OR_Deleted;
   }
 
   if (!EquivalentCands.empty())
     S.diagnoseEquivalentInternalLinkageDeclarations(Loc, Best->Function,
                                                     EquivalentCands);
-  Best->dumpFunctionSignature();
-  overload_debug::logger<<" is the best viable function\n";
-
-      atOverloadEnd(S.OverloadCallbacks,S,Loc);
+  atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Success,&*Best);
   return OR_Success;
 }
 

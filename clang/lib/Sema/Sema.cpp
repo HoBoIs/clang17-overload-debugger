@@ -1446,6 +1446,9 @@ void Sema::ActOnEndOfTranslationUnit() {
 
   if (!PP.isIncrementalProcessingEnabled())
     TUScope = nullptr;
+  for (auto& c:OverloadCallbacks){
+	  c->atEnd();
+  }
 }
 
 
