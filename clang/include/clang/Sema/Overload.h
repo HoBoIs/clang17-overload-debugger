@@ -832,7 +832,7 @@ class Sema;
 		overload_debug::logger<<BuiltinParamTypes[1].getAsString()<<"-";
 		overload_debug::logger<<BuiltinParamTypes[2].getAsString()<<"\n";
 	    }
-	    //HBI TODO: writesomething normal. 
+	    //HBI TODO: REMOVE 
 	}
     }
  
@@ -1069,6 +1069,7 @@ class Sema;
     SourceLocation Loc;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
+    SourceRange Sr;
 
     constexpr static unsigned NumInlineBytes =
         24 * sizeof(ImplicitConversionSequence);
@@ -1108,13 +1109,14 @@ class Sema;
 
   public:
     OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-                         OperatorRewriteInfo RewriteInfo = {})
-        : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}
+                         OperatorRewriteInfo RewriteInfo = {},SourceRange Sr={})//swap Sr,Rewiteinfo
+        : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo),Sr(Sr) {}
     OverloadCandidateSet(const OverloadCandidateSet &) = delete;
     OverloadCandidateSet &operator=(const OverloadCandidateSet &) = delete;
     ~OverloadCandidateSet() { destroyCandidates(); }
 
     SourceLocation getLocation() const { return Loc; }
+    SourceRange getSourceRange() const { return Sr; }
     CandidateSetKind getKind() const { return Kind; }
     OperatorRewriteInfo getRewriteInfo() const { return RewriteInfo; }
 

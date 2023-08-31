@@ -1,5 +1,5 @@
 #ifndef LLVM_CLANG_SEMA_OVERLOADCALLBACK_H
-#define LLVM_CLANG_SEMA_OverloadCALLBACK_H
+#define LLVM_CLANG_SEMA_OVERLOADCALLBACK_H
 
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/Overload.h"
@@ -19,17 +19,17 @@ public:
   virtual void atEnd()=0;
   virtual void atOverloadBegin(const Sema& TheSema,const SourceLocation& Loc,const OverloadCandidateSet& Set)=0;
   virtual void atOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
-		const OverloadCandidateSet& Set, OverloadingResult res, const OverloadCandidate* BestOrProblem)=0;
+    const OverloadCandidateSet& Set, OverloadingResult res, const OverloadCandidate* BestOrProblem)=0;
   virtual void atCompareOverloadBegin(const Sema& TheSema,const SourceLocation& Loc,
-		const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)=0;
+    const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)=0;
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
-		const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason)=0;
+    const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason)=0;
 }; 
 template <class OverloadCallbackPtrs>
 void atOverloadBegin(OverloadCallbackPtrs &Callbacks,
                      const Sema &TheSema,
                      const SourceLocation Loc,
-		     const OverloadCandidateSet& Set) {
+         const OverloadCandidateSet& Set) {
   for (auto &C : Callbacks) {
     if (C)
       C->atOverloadBegin(TheSema, Loc, Set);
@@ -40,9 +40,9 @@ template <class OverloadCallbackPtrs>
 void atOverloadEnd(OverloadCallbackPtrs &Callbacks,
                    const Sema &TheSema,
                    const SourceLocation Loc,
-		const OverloadCandidateSet& Set, 
-		OverloadingResult Res, 
-		const OverloadCandidate* BestOrProblem) {
+    const OverloadCandidateSet& Set, 
+    OverloadingResult Res, 
+    const OverloadCandidate* BestOrProblem) {
   for (auto &C : Callbacks) {
     if (C)
       C->atOverloadEnd(TheSema, Loc, Set,Res,BestOrProblem);
@@ -51,7 +51,7 @@ void atOverloadEnd(OverloadCallbackPtrs &Callbacks,
 
 template <class OverloadCallbackPtrs>
 void atCompareOverloadBegin(OverloadCallbackPtrs &Callbacks, const Sema& TheSema,const SourceLocation& Loc,
-		const OverloadCandidate &Cand1, const OverloadCandidate &Cand2){
+    const OverloadCandidate &Cand1, const OverloadCandidate &Cand2){
   for (auto &C : Callbacks) {
     if (C)
       C->atCompareOverloadBegin(TheSema, Loc, Cand1,Cand2);
@@ -59,7 +59,8 @@ void atCompareOverloadBegin(OverloadCallbackPtrs &Callbacks, const Sema& TheSema
 }
 template <class OverloadCallbackPtrs>
 void atCompareOverloadEnd(OverloadCallbackPtrs &Callbacks, const Sema& TheSema,const SourceLocation& Loc,
-		const OverloadCandidate &Cand1, const OverloadCandidate &Cand2,bool res,BetterOverloadCandidateReason reason){
+                        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2,
+                        bool res,BetterOverloadCandidateReason reason){
   for (auto &C : Callbacks) {
     if (C)
       C->atCompareOverloadEnd(TheSema, Loc, Cand1,Cand2,res,reason);
