@@ -1,3 +1,5 @@
+#include "clang/AST/Type.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -9,6 +11,7 @@
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -354,21 +357,55 @@ public:
     SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,S->getSourceManager() , S->getLangOpts()));
     CharSourceRange range;
     ArrayRef<Expr*> Args=Set->getArgs();
-    if (Args.empty()){
+    SourceRange objParamRange=Set->getObjectParamRange();
+    SourceLocation begloc=*Loc;
+    if (!Args.empty() && Args[0]->getBeginLoc()<begloc){
+      begloc=Args[0]->getBeginLoc();
+    }
+    if (objParamRange!=SourceRange() && objParamRange.getBegin()<begloc){
+      begloc=objParamRange.getBegin();
+    }
+    if (!Args.empty()){
+      SourceLocation endloc1(Lexer::getLocForEndOfToken(Args.back()->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+      if (endloc<endloc1) endloc=endloc1;
+    }
+    if (objParamRange!=SourceRange()){
+      SourceLocation endloc2(Lexer::getLocForEndOfToken(objParamRange.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
+      if (endloc<endloc2) endloc=endloc2;
+    }
+    range=CharSourceRange::getCharRange(begloc,endloc);
+    res.callSignature=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
+    /*
+    if (Args.empty() && SourceRange()==objParamRange){
       res.callSignature="(FormLocation) ";
       range=CharSourceRange::getCharRange(*Loc,endloc);
+      res.callSignature+=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
     }else{
-      SourceLocation endloc(Lexer::getLocForEndOfToken(Args[Args.size()-1]->getSourceRange().getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
       res.callSignature="";
-      range=CharSourceRange::getCharRange(Args[0]->getSourceRange().getBegin(),endloc);
-      //range=CharSourceRange::getCharRange(Set->getSourceRange().getBegin(),Set->getSourceRange().getEnd());
+      if (objParamRange!=SourceRange()){
+        res.callSignature="this=";
+        SourceLocation endloc(Lexer::getLocForEndOfToken(objParamRange.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
+        CharSourceRange cr=CharSourceRange::getCharRange(objParamRange.getBegin(),endloc);
+        res.callSignature+=Lexer::getSourceText(cr, S->getSourceManager(), S->getLangOpts());
+        res.callSignature+="; ";
+      }
+      if (!Args.empty()){
+        SourceLocation endloc(Lexer::getLocForEndOfToken(Args.back()->getSourceRange().getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
+        range=CharSourceRange::getCharRange(Args[0]->getSourceRange().getBegin(),endloc);
+        res.callSignature+=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
+      }//range=CharSourceRange::getCharRange(Set->getSourceRange().getBegin(),Set->getSourceRange().getEnd());
+    }*/
+    if (Set->getObjectParamType()!=QualType()) {
+      res.callTypes.push_back("(ObjectParam:"+Set->getObjectParamType().getAsString()+")");
     }
-    res.callSignature+=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
+    for (const auto& x:Args){
+      res.callTypes.push_back(x->getType().getAsString());
+    }
     S->getSourceManager();
     for (const auto& cand:*Set){
       if (cand.Viable){
         res.viableCandidates.push_back(getCandEntry(cand));
-        if (res.callTypes.empty()){
+        /*if (res.callTypes.empty()){
           for (const auto&x: cand.Conversions){
             if (x.isInitialized()==false){
               if (!BestOrProblem->IgnoreObjectArgument){
@@ -400,7 +437,7 @@ public:
               break;
             }
           }
-        }
+        }*/
       }
       else
         res.nonViableCandidates.push_back(getCandEntry(cand));
