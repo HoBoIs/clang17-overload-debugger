@@ -18510,7 +18510,7 @@ static void ComputeSelectedDestructor(Sema &S, CXXRecordDecl *Record) {
   }
 
   SourceLocation Loc = Record->getLocation();
-  OverloadCandidateSet OCS(Loc, OverloadCandidateSet::CSK_Normal);
+  OverloadCandidateSet OCS(Loc, OverloadCandidateSet::CSK_Normal,{});
 
   for (auto *Decl : Record->decls()) {
     if (auto *DD = dyn_cast<CXXDestructorDecl>(Decl)) {

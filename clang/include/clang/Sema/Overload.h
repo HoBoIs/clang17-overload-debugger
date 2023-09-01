@@ -1069,7 +1069,7 @@ class Sema;
     SourceLocation Loc;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
-    SourceRange Sr;
+    std::vector<Expr*> Args;//Make an owning structure. (Cope the data too???)
 
     constexpr static unsigned NumInlineBytes =
         24 * sizeof(ImplicitConversionSequence);
@@ -1109,14 +1109,17 @@ class Sema;
 
   public:
     OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-                         OperatorRewriteInfo RewriteInfo = {},SourceRange Sr={})//swap Sr,Rewiteinfo
-        : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo),Sr(Sr) {}
+                         ArrayRef<Expr*> Args, OperatorRewriteInfo RewriteInfo = {})
+        : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args){}//swap Sr,Rewiteinfo
+    //OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
+    //                     OperatorRewriteInfo RewriteInfo = {},SourceRange Sr={})//swap Sr,Rewiteinfo
+    //    : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo),Sr(Sr) {}
     OverloadCandidateSet(const OverloadCandidateSet &) = delete;
     OverloadCandidateSet &operator=(const OverloadCandidateSet &) = delete;
     ~OverloadCandidateSet() { destroyCandidates(); }
 
     SourceLocation getLocation() const { return Loc; }
-    SourceRange getSourceRange() const { return Sr; }
+    ArrayRef<Expr*> getArgs()const{return Args;}
     CandidateSetKind getKind() const { return Kind; }
     OperatorRewriteInfo getRewriteInfo() const { return RewriteInfo; }
 

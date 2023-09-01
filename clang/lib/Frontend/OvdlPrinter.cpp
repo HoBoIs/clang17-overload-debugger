@@ -353,12 +353,15 @@ public:
     res.callLocation=Loc->printToString(S->SourceMgr);
     SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,S->getSourceManager() , S->getLangOpts()));
     CharSourceRange range;
-    if (Set->getSourceRange()==SourceRange()){
+    ArrayRef<Expr*> Args=Set->getArgs();
+    if (Args.empty()){
       res.callSignature="(FormLocation) ";
       range=CharSourceRange::getCharRange(*Loc,endloc);
     }else{
+      SourceLocation endloc(Lexer::getLocForEndOfToken(Args[Args.size()-1]->getSourceRange().getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
       res.callSignature="";
-      range=CharSourceRange::getCharRange(Set->getSourceRange().getBegin(),Set->getSourceRange().getEnd());
+      range=CharSourceRange::getCharRange(Args[0]->getSourceRange().getBegin(),endloc);
+      //range=CharSourceRange::getCharRange(Set->getSourceRange().getBegin(),Set->getSourceRange().getEnd());
     }
     res.callSignature+=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
     S->getSourceManager();
