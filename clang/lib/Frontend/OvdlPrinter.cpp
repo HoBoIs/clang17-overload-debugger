@@ -39,6 +39,7 @@ namespace {
 struct OvdlCandEntry{
   std::string declLocation;
   std::string nameSignature;
+  std::optional<std::string> templateSource;
   //std::string Concepts; ???
   bool builtIn=0;
   bool Viable;
@@ -135,6 +136,9 @@ template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
     io.mapRequired("Name and signature",fields.nameSignature);
     io.mapRequired("declLocation",fields.declLocation);
+    if (fields.templateSource){
+      io.mapOptional("templateSource", *fields.templateSource);
+    }
     if (!OvdlCandEntry::extraInfoHidden){
       io.mapOptional("Viable", fields.Viable);
       io.mapOptional("Builtin", fields.builtIn);
@@ -225,7 +229,7 @@ void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
     llvm::yaml::EmptyContext Context;
     llvm::yaml::yamlize(YO,Entry,true,Context);
   }
-  Out<<"-+-+-"<<YAML<<"\n";
+  Out<<"---"<<YAML<<"\n";
 }
 
 
@@ -302,34 +306,6 @@ public:
     Entry.reason=toString(reason);
     compares.push_back(Entry);
   }
-  void getConstraints(const OverloadCandidate& C){
-    std::vector<std::string> requtres;
-    llvm::SmallVector<const Expr *> AC;
-    if (C.FoundDecl->getAsFunction()->getTemplatedKind()!=FunctionDecl::TK_NonTemplate){
-      //const auto& x=C.FoundDecl->getAsFunction()->getTemplateSpecializationArgsAsWritten();
-      const auto& x=C.FoundDecl->getAsFunction()->getDescribedFunctionTemplate();
-      if (x==0) return;
-      SourceLocation endLoc(Lexer::getLocForEndOfToken(x->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
-      CharSourceRange r=CharSourceRange::getCharRange(x->getBeginLoc(),endLoc);
-      //llvm::errs()<<Lexer::getSourceText(r, S->getSourceManager(), S->getLangOpts())<<" ";
-
-      //x->dump();
-      x->getAssociatedConstraints(AC);
-      if (AC.size()){
-        for (const auto& y:AC){
-          SourceLocation endLoc(Lexer::getLocForEndOfToken(y->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
-          CharSourceRange range=CharSourceRange::getCharRange(y->getBeginLoc(),endLoc);
-          //llvm::errs()<<Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts())<<" ";
-          requtres.push_back(std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts())));
-        }
-      //llvm::errs()<<"\n";
-      }
-    }
-    for (const auto&x:requtres)
-      llvm::errs()<<x<<"\t";
-    if (requtres.size())
-    llvm::errs()<<"\n";
-  }
   OvdlCandEntry getCandEntry(const OverloadCandidate& C){
     OvdlCandEntry res;
     res.Viable=C.Viable;
@@ -354,9 +330,10 @@ public:
     res.declLocation=C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
     //res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
     res.nameSignature=C.FoundDecl.getDecl()->getQualifiedNameAsString();
-    getConstraints(C);
     if (C.Function){
       res.nameSignature+=" - "+getSignature(C);
+      res.templateSource=getTemplate(C);
+      if (res.templateSource=="") res.templateSource={};
       //res.nameSignature+=" - "+getSignature(*C.Function);
     }else{
       llvm::errs()<<"\n"<<res.nameSignature<<"";
@@ -365,39 +342,29 @@ public:
     }
     return res;
   }
-  //MOVE TO FunctionDecl
-  std::string getSignature(const OverloadCandidate C) const{
-    std::string res;
-    const FunctionDecl* f=C.Function;
-    const FunctionDecl* f2=C.FoundDecl->getAsFunction();
+  std::string getTemplate(const OverloadCandidate& C){
+    const FunctionDecl* f=C.FoundDecl->getAsFunction();
+    if (!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
-    res=f->getType().getAsString();
-    if (!f2->isTemplated() ) return res;
-    SourceRange r=f2->getDescribedFunctionTemplate()->getSourceRange();
-    r.setEnd(f2->getTypeSpecEndLoc());
-    //SourceRange r=f.getPrimaryTemplate()->getCanonicalDecl()->getSourceRange();
-    const auto* t=f2->getDescribedTemplate();
-    //const auto* t=f2->getDescribedFunctionTemplate();
+    SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
+    r.setEnd(f->getTypeSpecEndLoc());
+    const auto* t=f->getDescribedTemplate();
     SourceLocation l0;
     if (t) {
       t->getAssociatedConstraints(AC);
       if (AC.size()){
         l0=AC.back()->getEndLoc();
-        //AC.back()->dump();
       }
     }
     if (l0>r.getEnd())
       r.setEnd(l0);
-    //t->getEndLoc();
-    //t->getAssociatedConstraints(AC);
-
-    //r=f.getPrimaryTemplate()->getUnderlyingDecl()->getEnd;
     SourceLocation endloc(Lexer::getLocForEndOfToken(r.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
     CharSourceRange range=CharSourceRange::getCharRange(r.getBegin(),endloc);
-    //SourceLocation endloc(Lexer::getLocForEndOfToken(f.getTypeSpecEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
-    //CharSourceRange range=CharSourceRange::getCharRange(f.getBeginLoc(),endloc);
-    return res+" from template "+std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
-;
+    return std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+  }
+  std::string getSignature(const OverloadCandidate& C) const{
+    const FunctionDecl* f=C.Function;
+    return f->getType().getAsString();
   }
   OvdlResEntry getResEntry(OverloadingResult ovres, const OverloadCandidate* BestOrProblem){
     OvdlResEntry res;
