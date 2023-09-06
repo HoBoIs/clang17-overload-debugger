@@ -6077,7 +6077,7 @@ InitializationSequence::InitializationSequence(
     Sema &S, const InitializedEntity &Entity, const InitializationKind &Kind,
     MultiExprArg Args, bool TopLevelOfInitList, bool TreatUnavailableAsInvalid)
     : FailedOverloadResult(OR_Success),
-      FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal,Args) {
+      FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal,Args,Kind.getRange().getEnd()) {
   InitializeFrom(S, Entity, Kind, Args, TopLevelOfInitList,
                  TreatUnavailableAsInvalid);
 }

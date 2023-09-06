@@ -1451,7 +1451,7 @@ TryUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
 
   // Attempt user-defined conversion.
   OverloadCandidateSet Conversions(From->getExprLoc(),
-                                   OverloadCandidateSet::CSK_Normal,From);
+                                   OverloadCandidateSet::CSK_Normal,From,From->getSourceRange().getEnd());
   switch (IsUserDefinedConversion(S, From, ToType, ICS.UserDefined,
                                   Conversions, AllowExplicit,
                                   AllowObjCConversionOnExplicit)) {
@@ -3763,7 +3763,7 @@ bool
 Sema::DiagnoseMultipleUserDefinedConversion(Expr *From, QualType ToType) {
   ImplicitConversionSequence ICS;
   OverloadCandidateSet CandidateSet(From->getExprLoc(),
-                                    OverloadCandidateSet::CSK_Normal,From);
+                                    OverloadCandidateSet::CSK_Normal,From,From->getSourceRange().getEnd());
   OverloadingResult OvResult =
     IsUserDefinedConversion(*this, From, ToType, ICS.UserDefined,
                             CandidateSet, AllowedExplicit::None, false);
@@ -4754,7 +4754,7 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
   auto *T2RecordDecl = cast<CXXRecordDecl>(T2->castAs<RecordType>()->getDecl());
 
   OverloadCandidateSet CandidateSet(
-      DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion,Init);
+      DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion,Init,Init->getSourceRange().getEnd());
   const auto &Conversions = T2RecordDecl->getVisibleConversionFunctions();
   for (auto I = Conversions.begin(), E = Conversions.end(); I != E; ++I) {
     NamedDecl *D = *I;
@@ -6362,7 +6362,7 @@ ExprResult Sema::PerformContextualImplicitConversion(
     // If one unique T is found:
     // First, build a candidate set from the previously recorded
     // potentially viable conversions.
-    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,From);
+    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,From,From->getSourceRange().getEnd());
     collectViableConversionCandidates(*this, From, ToType, ViableConversions,
                                       CandidateSet);
 
@@ -13663,7 +13663,7 @@ ExprResult Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn,
                                          bool AllowTypoCorrection,
                                          bool CalleesAddressIsTaken) {
   OverloadCandidateSet CandidateSet(Fn->getExprLoc(),
-                                    OverloadCandidateSet::CSK_Normal,Args);
+                                    OverloadCandidateSet::CSK_Normal,Args,RParenLoc);
   ExprResult result;
 
   if (buildOverloadedCallSet(S, Fn, ULE, Args, LParenLoc, &CandidateSet,
@@ -14047,7 +14047,7 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
     return CreateBuiltinBinOp(OpLoc, Opc, Args[0], Args[1]);
 
   // Build the overload set.
-  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,Args,
+  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,Args,Args[1]->getSourceRange().getEnd(),
                                     OverloadCandidateSet::OperatorRewriteInfo(
                                         Op, OpLoc, AllowRewrittenCandidates));//???
   if (DefaultedFn)
@@ -14573,7 +14573,8 @@ ExprResult Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
     return ExprError();
   }
   // Build an empty overload set.
-  OverloadCandidateSet CandidateSet(LLoc, OverloadCandidateSet::CSK_Operator,Args,{},Base);
+  OverloadCandidateSet CandidateSet(LLoc, OverloadCandidateSet::CSK_Operator,Args,RLoc);
+  CandidateSet.setBaseType(Base->getType());
 
   // Subscript can only be overloaded as a member function.
 
@@ -14826,10 +14827,13 @@ ExprResult Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
 
     // Add overload candidates
     OverloadCandidateSet CandidateSet(UnresExpr->getMemberLoc(),
-                                      OverloadCandidateSet::CSK_Normal,Args,{},ObjectType);//only if ovdl is on
-    if (!UnresExpr->isImplicitAccess()) {
+                                      OverloadCandidateSet::CSK_Normal,Args,RParenLoc);//only if ovdl is on
+    /*if (!UnresExpr->isImplicitAccess()) {
       CandidateSet.setObjectParamRange(UnresExpr->getBase()->getSourceRange());
-    }
+    }*/
+    if (1)
+      CandidateSet.setBaseType(ObjectType);
+
 
     // FIXME: avoid copy.
     TemplateArgumentListInfo TemplateArgsBuffer, *TemplateArgs = nullptr;
@@ -15047,7 +15051,9 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   //  ordinary lookup of the name operator() in the context of
   //  (E).operator().
   OverloadCandidateSet CandidateSet(LParenLoc,
-                                    OverloadCandidateSet::CSK_Operator,Args,{},Obj);
+                                    OverloadCandidateSet::CSK_Operator,Args,RParenLoc);
+  if (1)//Ovdl On?
+    CandidateSet.setBaseType(Obj->getType());
   DeclarationName OpName = Context.DeclarationNames.getCXXOperatorName(OO_Call);
 
   if (RequireCompleteType(LParenLoc, Object.get()->getType(),
@@ -15297,7 +15303,7 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc,
   //   overload resolution mechanism (13.3).
   DeclarationName OpName =
     Context.DeclarationNames.getCXXOperatorName(OO_Arrow);
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Operator,{},{},Base);
+  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Operator,{},OpLoc);
 
   if (RequireCompleteType(Loc, Base->getType(),
                           diag::err_typecheck_incomplete_tag, Base))
@@ -15405,7 +15411,7 @@ ExprResult Sema::BuildLiteralOperatorCall(LookupResult &R,
   SourceLocation UDSuffixLoc = SuffixInfo.getCXXLiteralOperatorNameLoc();
 
   OverloadCandidateSet CandidateSet(UDSuffixLoc,
-                                    OverloadCandidateSet::CSK_Normal,Args);
+                                    OverloadCandidateSet::CSK_Normal,Args,LitEndLoc);
   AddNonMemberOperatorCandidates(R.asUnresolvedSet(), Args, CandidateSet,
                                  TemplateArgs);
 

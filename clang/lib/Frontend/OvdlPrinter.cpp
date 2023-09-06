@@ -1,3 +1,4 @@
+#include "clang/AST/Decl.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -301,6 +302,34 @@ public:
     Entry.reason=toString(reason);
     compares.push_back(Entry);
   }
+  void getConstraints(const OverloadCandidate& C){
+    std::vector<std::string> requtres;
+    llvm::SmallVector<const Expr *> AC;
+    if (C.FoundDecl->getAsFunction()->getTemplatedKind()!=FunctionDecl::TK_NonTemplate){
+      //const auto& x=C.FoundDecl->getAsFunction()->getTemplateSpecializationArgsAsWritten();
+      const auto& x=C.FoundDecl->getAsFunction()->getDescribedFunctionTemplate();
+      if (x==0) return;
+      SourceLocation endLoc(Lexer::getLocForEndOfToken(x->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+      CharSourceRange r=CharSourceRange::getCharRange(x->getBeginLoc(),endLoc);
+      //llvm::errs()<<Lexer::getSourceText(r, S->getSourceManager(), S->getLangOpts())<<" ";
+
+      //x->dump();
+      x->getAssociatedConstraints(AC);
+      if (AC.size()){
+        for (const auto& y:AC){
+          SourceLocation endLoc(Lexer::getLocForEndOfToken(y->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+          CharSourceRange range=CharSourceRange::getCharRange(y->getBeginLoc(),endLoc);
+          //llvm::errs()<<Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts())<<" ";
+          requtres.push_back(std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts())));
+        }
+      //llvm::errs()<<"\n";
+      }
+    }
+    for (const auto&x:requtres)
+      llvm::errs()<<x<<"\t";
+    if (requtres.size())
+    llvm::errs()<<"\n";
+  }
   OvdlCandEntry getCandEntry(const OverloadCandidate& C){
     OvdlCandEntry res;
     res.Viable=C.Viable;
@@ -325,8 +354,10 @@ public:
     res.declLocation=C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
     //res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
     res.nameSignature=C.FoundDecl.getDecl()->getQualifiedNameAsString();
+    getConstraints(C);
     if (C.Function){
-      res.nameSignature+=" - "+getSignature(*C.Function);
+      res.nameSignature+=" - "+getSignature(C);
+      //res.nameSignature+=" - "+getSignature(*C.Function);
     }else{
       llvm::errs()<<"\n"<<res.nameSignature<<"";
       llvm::errs()<<"\n"<<res.declLocation<<"\n";
@@ -335,12 +366,38 @@ public:
     return res;
   }
   //MOVE TO FunctionDecl
-  std::string getSignature(const FunctionDecl& f) const{
-    std::string res=f.getType().getAsString();
-      if (auto const * X=f.getPrimaryTemplate()){
-        res+="\tSpecioalization of "+getSignature(*X->getTemplatedDecl());
+  std::string getSignature(const OverloadCandidate C) const{
+    std::string res;
+    const FunctionDecl* f=C.Function;
+    const FunctionDecl* f2=C.FoundDecl->getAsFunction();
+    llvm::SmallVector<const Expr *> AC;
+    res=f->getType().getAsString();
+    if (!f2->isTemplated() ) return res;
+    SourceRange r=f2->getDescribedFunctionTemplate()->getSourceRange();
+    r.setEnd(f2->getTypeSpecEndLoc());
+    //SourceRange r=f.getPrimaryTemplate()->getCanonicalDecl()->getSourceRange();
+    const auto* t=f2->getDescribedTemplate();
+    //const auto* t=f2->getDescribedFunctionTemplate();
+    SourceLocation l0;
+    if (t) {
+      t->getAssociatedConstraints(AC);
+      if (AC.size()){
+        l0=AC.back()->getEndLoc();
+        //AC.back()->dump();
       }
-    return res;
+    }
+    if (l0>r.getEnd())
+      r.setEnd(l0);
+    //t->getEndLoc();
+    //t->getAssociatedConstraints(AC);
+
+    //r=f.getPrimaryTemplate()->getUnderlyingDecl()->getEnd;
+    SourceLocation endloc(Lexer::getLocForEndOfToken(r.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
+    CharSourceRange range=CharSourceRange::getCharRange(r.getBegin(),endloc);
+    //SourceLocation endloc(Lexer::getLocForEndOfToken(f.getTypeSpecEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+    //CharSourceRange range=CharSourceRange::getCharRange(f.getBeginLoc(),endloc);
+    return res+" from template "+std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres, const OverloadCandidate* BestOrProblem){
     OvdlResEntry res;
@@ -357,20 +414,21 @@ public:
     SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,S->getSourceManager() , S->getLangOpts()));
     CharSourceRange range;
     ArrayRef<Expr*> Args=Set->getArgs();
-    SourceRange objParamRange=Set->getObjectParamRange();
+    SourceLocation endloc02=Set->getEndLoc();
+    //SourceRange objParamRange=Set->getObjectParamRange();
     SourceLocation begloc=*Loc;
     if (!Args.empty() && Args[0]->getBeginLoc()<begloc){
       begloc=Args[0]->getBeginLoc();
     }
-    if (objParamRange!=SourceRange() && objParamRange.getBegin()<begloc){
+    /*if (objParamRange!=SourceRange() && objParamRange.getBegin()<begloc){
       begloc=objParamRange.getBegin();
-    }
+    }*/
     if (!Args.empty()){
       SourceLocation endloc1(Lexer::getLocForEndOfToken(Args.back()->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
       if (endloc<endloc1) endloc=endloc1;
     }
-    if (objParamRange!=SourceRange()){
-      SourceLocation endloc2(Lexer::getLocForEndOfToken(objParamRange.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
+    if (endloc02!=SourceLocation()){
+      SourceLocation endloc2(Lexer::getLocForEndOfToken(endloc02, 0,S->getSourceManager() , S->getLangOpts()));
       if (endloc<endloc2) endloc=endloc2;
     }
     range=CharSourceRange::getCharRange(begloc,endloc);

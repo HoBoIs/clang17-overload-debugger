@@ -2488,7 +2488,7 @@ static bool resolveAllocationOverload(
     bool &PassAlignment, FunctionDecl *&Operator,
     OverloadCandidateSet *AlignedCandidates, Expr *AlignArg, bool Diagnose) {
   OverloadCandidateSet Candidates(R.getNameLoc(),
-                                  OverloadCandidateSet::CSK_Normal,Args);
+                                  OverloadCandidateSet::CSK_Normal,Args,Range.getEnd());
   for (LookupResult::iterator Alloc = R.begin(), AllocEnd = R.end();
        Alloc != AllocEnd; ++Alloc) {
     // Even member operator new/delete are implicitly treated as

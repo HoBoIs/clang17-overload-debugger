@@ -1070,8 +1070,9 @@ class Sema;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
     std::vector<Expr*> Args;//Make an owning structure. (Cope the data too???)
-    SourceRange ObjectParamRange;
     QualType ObjectParamType;
+    SourceLocation EndLoc;
+    
 
     constexpr static unsigned NumInlineBytes =
         24 * sizeof(ImplicitConversionSequence);
@@ -1111,15 +1112,12 @@ class Sema;
 
   public:
     const QualType& getObjectParamType()const{return ObjectParamType;}
-    const SourceRange& getObjectParamRange()const{return ObjectParamRange;}
-    void setObjectParamRange(const SourceRange& sr){ObjectParamRange=sr;}
+    const SourceLocation& getEndLoc()const{return EndLoc;}
+    void setEndLoc(const SourceLocation& El){EndLoc=El;}
+    void setBaseType(const QualType& Ty){ObjectParamType=Ty;}
     OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-                         ArrayRef<Expr*> Args, OperatorRewriteInfo RewriteInfo,const QualType& BaseType)
-        : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args),ObjectParamType(BaseType){}
-    OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-                         ArrayRef<Expr*> Args, OperatorRewriteInfo RewriteInfo = {},Expr* Base=nullptr)
-        : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args)
-        ,ObjectParamRange(Base?Base->getSourceRange():SourceRange()), ObjectParamType(Base?Base->getType():QualType()){}
+                         ArrayRef<Expr*> Args, const SourceLocation EndLoc={}, OperatorRewriteInfo RewriteInfo = {})
+        : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args),EndLoc(EndLoc){}
     //OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
     //                     OperatorRewriteInfo RewriteInfo = {},SourceRange Sr={})//swap Sr,Rewiteinfo
     //    : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo),Sr(Sr) {}

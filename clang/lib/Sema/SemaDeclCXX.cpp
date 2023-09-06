@@ -8008,7 +8008,7 @@ private:
     // we've already found there is no viable 'operator<=>' candidate (and are
     // considering synthesizing a '<=>' from '==' and '<').
     OverloadCandidateSet CandidateSet(
-        FD->getLocation(), OverloadCandidateSet::CSK_Operator,Args,
+        FD->getLocation(), OverloadCandidateSet::CSK_Operator,Args,{},
         OverloadCandidateSet::OperatorRewriteInfo(
             OO, FD->getLocation(),
             /*AllowRewrittenCandidates=*/!SpaceshipCandidates));
