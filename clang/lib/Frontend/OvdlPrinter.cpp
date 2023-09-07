@@ -43,6 +43,8 @@ struct OvdlCandEntry{
   //std::string Concepts; ???
   bool builtIn=0;
   bool Viable;
+  OverloadFailureKind failKind;
+  std::string extraFailInfo;
   static bool extraInfoHidden;
 };
 bool OvdlCandEntry::extraInfoHidden=true;
@@ -111,8 +113,8 @@ LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvdlCandEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlCompareEntry);
 namespace llvm{
 namespace yaml{
-template <> struct MappingTraits<BetterOverloadCandidateReason>{
-  static void ScalarEnumerationTraits(IO& io, BetterOverloadCandidateReason& val){
+template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
+  static void enumeration(IO& io, BetterOverloadCandidateReason& val){
       io.enumCase(val,"viability",viability);
       io.enumCase(val,"betterConversion",betterConversion);
       io.enumCase(val,"betterImplicitConversion",betterImplicitConversion);
@@ -132,6 +134,27 @@ template <> struct MappingTraits<BetterOverloadCandidateReason>{
       io.enumCase(val,"inconclusive",inconclusive);
   }
 };
+template <> struct ScalarEnumerationTraits<clang::OverloadFailureKind>{
+  static void enumeration(IO& io, clang::OverloadFailureKind& val){
+      io.enumCase(val,"ovl_fail_too_many_arguments",ovl_fail_too_many_arguments);
+      io.enumCase(val,"ovl_fail_too_few_arguments",ovl_fail_too_few_arguments);
+      io.enumCase(val,"ovl_fail_bad_conversion",ovl_fail_bad_conversion);
+      io.enumCase(val,"ovl_fail_bad_deduction",ovl_fail_bad_deduction);
+      io.enumCase(val,"ovl_fail_trivial_conversion",ovl_fail_trivial_conversion);
+      io.enumCase(val,"ovl_fail_illegal_constructor",ovl_fail_illegal_constructor);
+      io.enumCase(val,"ovl_fail_bad_final_conversion",ovl_fail_bad_final_conversion);
+      io.enumCase(val,"ovl_fail_final_conversion_not_exact",ovl_fail_final_conversion_not_exact);
+      io.enumCase(val,"ovl_fail_bad_target",ovl_fail_bad_target);
+      io.enumCase(val,"ovl_fail_enable_if",ovl_fail_enable_if);
+      io.enumCase(val,"ovl_fail_explicit",ovl_fail_explicit);
+      io.enumCase(val,"ovl_fail_addr_not_available",ovl_fail_addr_not_available);
+      io.enumCase(val,"ovl_fail_inhctor_slice",ovl_fail_inhctor_slice);
+      io.enumCase(val,"ovl_non_default_multiversion_function",ovl_non_default_multiversion_function);
+      io.enumCase(val,"ovl_fail_object_addrspace_mismatch",ovl_fail_object_addrspace_mismatch);
+      io.enumCase(val,"ovl_fail_constraints_not_satisfied",ovl_fail_constraints_not_satisfied);
+      io.enumCase(val,"ovl_fail_module_mismatched",ovl_fail_module_mismatched);
+    }
+};
 template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
     io.mapRequired("Name and signature",fields.nameSignature);
@@ -142,6 +165,11 @@ template <> struct MappingTraits<OvdlCandEntry>{
     if (!OvdlCandEntry::extraInfoHidden){
       io.mapOptional("Viable", fields.Viable);
       io.mapOptional("Builtin", fields.builtIn);
+    }
+    if (!fields.Viable){
+      io.mapOptional("FailureKind", fields.failKind);
+      if (fields.extraFailInfo!="")
+        io.mapOptional("extraFailInfo", fields.extraFailInfo);
     }
   }
 };
@@ -306,9 +334,47 @@ public:
     Entry.reason=toString(reason);
     compares.push_back(Entry);
   }
+  std::string getExtraFailInfo(const OverloadCandidate& C){
+    if (C.Viable) return "";
+    switch ((OverloadFailureKind)C.FailureKind) {
+    case ovl_fail_too_many_arguments:
+    case ovl_fail_too_few_arguments:
+      return "";
+    case ovl_fail_bad_conversion:
+      for (int i=0; i!=C.Conversions.size(); i++){
+        if (C.Conversions[i].isBad()){
+          return "Pos: "+std::to_string(i)+
+            "    From: "+C.Conversions[i].Bad.getFromType().getAsString()+
+            "    To: "+C.Conversions[i].Bad.getToType().getAsString();
+        }
+      }
+      return "";
+    case ovl_fail_bad_deduction:
+      if (const auto& x=C.DeductionFailure.getCallArgIndex()){
+        return "At pos "+std::to_string(*x);
+      }else return "";
+    case ovl_fail_trivial_conversion:
+    case ovl_fail_illegal_constructor:
+    case ovl_fail_bad_final_conversion:
+    case ovl_fail_final_conversion_not_exact:
+    case ovl_fail_bad_target:
+    case ovl_fail_enable_if:
+    case ovl_fail_explicit:
+    case ovl_fail_addr_not_available:
+    case ovl_fail_inhctor_slice:
+    case ovl_non_default_multiversion_function:
+    case ovl_fail_object_addrspace_mismatch:
+    case ovl_fail_constraints_not_satisfied:
+    case ovl_fail_module_mismatched:
+      break;
+    }
+    return "";
+  }
   OvdlCandEntry getCandEntry(const OverloadCandidate& C){
     OvdlCandEntry res;
     res.Viable=C.Viable;
+    res.failKind=(OverloadFailureKind)C.FailureKind;
+    res.extraFailInfo=getExtraFailInfo(C);
     if (C.IsSurrogate){
       if (C.FoundDecl.getDecl()!=0){
         res.nameSignature=C.FoundDecl.getDecl()->getQualifiedNameAsString();

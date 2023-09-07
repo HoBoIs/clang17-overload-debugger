@@ -13,7 +13,6 @@
 
 #ifndef LLVM_CLANG_SEMA_OVERLOAD_H
 #define LLVM_CLANG_SEMA_OVERLOAD_H
-#include "clang/Sema/OverLogger.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclAccessPair.h"
 #include "clang/AST/DeclBase.h"
@@ -821,21 +820,7 @@ class Sema;
 
   /// OverloadCandidate - A single candidate in an overload set (C++ 13.3).
   struct OverloadCandidate {
-    void dumpFunctionSignature() const{
-	if (Function) Function->dumpSignature();
-	else{
-	    overload_debug::logger<<"Fun is NULL ";
-	    if (IsSurrogate) 
-		overload_debug::logger<<"Surrogate";
-	    else{
-		overload_debug::logger<<BuiltinParamTypes[0].getAsString()<<"-";
-		overload_debug::logger<<BuiltinParamTypes[1].getAsString()<<"-";
-		overload_debug::logger<<BuiltinParamTypes[2].getAsString()<<"\n";
-	    }
-	    //HBI TODO: REMOVE 
-	}
-    }
- 
+     
     /// Function - The actual function that this candidate
     /// represents. When NULL, this is a built-in candidate
     /// (C++ [over.oper]) or a surrogate for a conversion to a

@@ -23,7 +23,6 @@
 #include "clang/Basic/TypeTraits.h"
 #include "llvm/ADT/StringExtras.h"
 
-#include "clang/Sema/OverLogger.h"
 #include <algorithm>
 #include <utility>
 
@@ -708,13 +707,6 @@ void TextNodeDumper::dumpName(const NamedDecl *ND) {
   if (ND->getDeclName()) {
     ColorScope Color(OS, ShowColors, DeclNameColor);
     OS << ' ' << ND->getDeclName();
-  }
-}
-void TextNodeDumper::dumpQualifiedName(const NamedDecl *ND) {
-  if (overload_debug::logger.is_loging()==false)return;
-  if (ND->getDeclName()) {
-    ColorScope Color(OS, ShowColors, DeclNameColor);
-    OS << ' ' << ND->getQualifiedNameAsString();
   }
 }
 

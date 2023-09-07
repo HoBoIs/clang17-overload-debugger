@@ -20,7 +20,6 @@
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeOrdering.h"
-#include "clang/Sema/OverLogger.h"//TODO remove
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/OperatorKinds.h"
@@ -831,7 +830,7 @@ TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList() {
   return nullptr;
 }
 
-const TemplateArgument *DeductionFailureInfo::getFirstArg() {
+const TemplateArgument *DeductionFailureInfo::getFirstArg() const {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -863,7 +862,7 @@ const TemplateArgument *DeductionFailureInfo::getFirstArg() {
   return nullptr;
 }
 
-const TemplateArgument *DeductionFailureInfo::getSecondArg() {
+const TemplateArgument *DeductionFailureInfo::getSecondArg() const {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -895,7 +894,7 @@ const TemplateArgument *DeductionFailureInfo::getSecondArg() {
   return nullptr;
 }
 
-std::optional<unsigned> DeductionFailureInfo::getCallArgIndex() {
+std::optional<unsigned> DeductionFailureInfo::getCallArgIndex() const{
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_DeducedMismatch:
   case Sema::TDK_DeducedMismatchNested:
@@ -6498,8 +6497,6 @@ void Sema::AddOverloadCandidate(
   }
 
   if (!CandidateSet.isNewCandidate(Function, PO)){
-    Function->dumpSignature();
-    overload_debug::logger<<" was added earlier\n";
     return;
   }
 
@@ -6509,8 +6506,6 @@ void Sema::AddOverloadCandidate(
   CXXConstructorDecl *Constructor = dyn_cast<CXXConstructorDecl>(Function);
   if (Constructor && Constructor->isDefaulted() && Constructor->isDeleted() &&
       Constructor->isMoveConstructor()){
-      Function->dumpSignature();
-      overload_debug::logger<<" is not added to candidate set (because it's a deleted move constructor\n";
     return;
   }
 
@@ -6576,8 +6571,6 @@ void Sema::AddOverloadCandidate(
         !Function->getAttr<TargetVersionAttr>()->isDefaultVersion()))) {
     Candidate.Viable = false;
     Candidate.FailureKind = ovl_non_default_multiversion_function;
-    Function->dumpSignature();
-    overload_debug::logger<<" is added as not viable candidate (ovl_non_default_multiversion_function)\n";
     return;
   }
 
@@ -6592,8 +6585,6 @@ void Sema::AddOverloadCandidate(
                        ClassType))) {
       Candidate.Viable = false;
       Candidate.FailureKind = ovl_fail_illegal_constructor;
-      Function->dumpSignature();
-      overload_debug::logger<<" is added as not viable candidate (ovl_fail_illegal_constructor)\n";
       return;
     }
 
@@ -6615,8 +6606,6 @@ void Sema::AddOverloadCandidate(
           (Context.hasSameUnqualifiedType(D, P) || IsDerivedFrom(Loc, D, P))) {
         Candidate.Viable = false;
         Candidate.FailureKind = ovl_fail_inhctor_slice;
-        Function->dumpSignature();
-        overload_debug::logger<<" is added as not viable candidate (ovl_fail_inhctor_slice)\n";
         return;
       }
     }
@@ -6628,8 +6617,6 @@ void Sema::AddOverloadCandidate(
             CandidateSet.getDestAS())) {
       Candidate.Viable = false;
       Candidate.FailureKind = ovl_fail_object_addrspace_mismatch;
-      Function->dumpSignature();
-      overload_debug::logger<<" is added as not viable candidate (ovl_fail_object_addrspace_mismatch)\n";
     }
   }
 
@@ -6643,8 +6630,6 @@ void Sema::AddOverloadCandidate(
       shouldEnforceArgLimit(PartialOverloading, Function)) {
     Candidate.Viable = false;
     Candidate.FailureKind = ovl_fail_too_many_arguments;
-    Function->dumpSignature();
-    overload_debug::logger<<" is added as not viable candidate (ovl_fail_too_many_arguments)\n";
     return;
   }
 
@@ -6659,8 +6644,6 @@ void Sema::AddOverloadCandidate(
     // Not enough arguments.
     Candidate.Viable = false;
     Candidate.FailureKind = ovl_fail_too_few_arguments;
-    Function->dumpSignature();
-    overload_debug::logger<<" is added as not viable candidate (ovl_fail_too_few_argments)\n";
     return;
   }
 
@@ -6674,8 +6657,6 @@ void Sema::AddOverloadCandidate(
       if (!Caller->isImplicit() && !IsAllowedCUDACall(Caller, Function)) {
         Candidate.Viable = false;
         Candidate.FailureKind = ovl_fail_bad_target;
-        Function->dumpSignature();
-        overload_debug::logger<<" is added as not viable candidate (ovl_fail_bad_target)\n";
         return;
       }
 
@@ -6686,8 +6667,6 @@ void Sema::AddOverloadCandidate(
         !Satisfaction.IsSatisfied) {
       Candidate.Viable = false;
       Candidate.FailureKind = ovl_fail_constraints_not_satisfied;
-      Function->dumpSignature();
-      overload_debug::logger<<" is added as not viable candidate (ovl_fail_constraints_not_satisfied)\n";
       return;
     }
   }
@@ -6714,8 +6693,6 @@ void Sema::AddOverloadCandidate(
       if (Candidate.Conversions[ConvIdx].isBad()) {
         Candidate.Viable = false;
         Candidate.FailureKind = ovl_fail_bad_conversion;
-	Function->dumpSignature();
-	overload_debug::logger<<" is added as not viable candidate (ovl_fail_bad_conversion)\n";
         return;
       }
     } else {
@@ -6731,8 +6708,6 @@ void Sema::AddOverloadCandidate(
     Candidate.Viable = false;
     Candidate.FailureKind = ovl_fail_enable_if;
     Candidate.DeductionFailure.Data = FailedAttr;
-    Function->dumpSignature();
-    overload_debug::logger<<" is added as not viable candidate (ovl_fail_enable_if)\n";
     return;
   }
 }
@@ -9670,8 +9645,6 @@ Sema::AddArgumentDependentLookupCandidates(DeclarationName Name,
   for (ADLResult::iterator I = Fns.begin(), E = Fns.end(); I != E; ++I) {
     DeclAccessPair FoundDecl = DeclAccessPair::make(*I, AS_none);
 
-    overload_debug::logger << "ADL candidate: \n";
-    if (overload_debug::logger.is_loging()) (*I)->dump();
     if (FunctionDecl *FD = dyn_cast<FunctionDecl>(*I)) {
       if (ExplicitTemplateArgs)
         continue;
@@ -10043,8 +10016,6 @@ bool clang::isBetterOverloadCandidate(
         // with a reversed form that is written in the same way.
         //
         // We diagnose this as an extension from CreateOverloadedBinOp.
-	//overload_debug::logger<<"Special case for c++20-s ==\n";
-	//TODO HBI better message for this case
         HasWorseConversion = true;
         break;
       }
@@ -10076,7 +10047,6 @@ bool clang::isBetterOverloadCandidate(
       Cand1.Function && Cand2.Function &&
       isa<CXXConversionDecl>(Cand1.Function) &&
       isa<CXXConversionDecl>(Cand2.Function)) {
-    //overload_debug::logger<<"We are in an initialization by user-defined conversion: ";
     // First check whether we prefer one of the conversion functions over the
     // other. This only distinguishes the results in non-standard, extension
     // cases such as the conversion from a lambda closure type to a function
@@ -10111,7 +10081,6 @@ bool clang::isBetterOverloadCandidate(
   // a conversion function.  
   if (Kind == OverloadCandidateSet::CSK_InitByConstructor && NumArgs == 1 &&
       Cand1.Function && Cand2.Function){
-      //overload_debug::logger<<"We are in an initialization by constructor: ";
       if (isa<CXXConstructorDecl>(Cand1.Function) !=
           isa<CXXConstructorDecl>(Cand2.Function)){
         if (isa<CXXConstructorDecl>(Cand1.Function)){
@@ -10481,14 +10450,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
         PendingBest.push_back(Cand);
         Cand->Best = true;
 
-        //Best->dumpFunctionSignature();
-        //overload_debug::logger<<" is not a better candidate than (the also viable) ";
-        //Cand->dumpFunctionSignature();
         if (S.isEquivalentInternalLinkageDeclaration(Cand->Function,
                                                      Curr->Function)){
-          //Cand->dumpFunctionSignature();
-          //overload_debug::logger<<" is equivalent to \n";
-          //Best->dumpFunctionSignature();
           Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	}else

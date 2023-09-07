@@ -279,19 +279,19 @@ struct DeductionFailureInfo {
 
   /// Retrieve the template argument list associated with this
   /// deduction failure, if any.
-  TemplateArgumentList *getTemplateArgumentList();
+  TemplateArgumentList *getTemplateArgumentList  ();
 
   /// Return the first template argument this deduction failure
   /// refers to, if any.
-  const TemplateArgument *getFirstArg();
+  const TemplateArgument *getFirstArg () const;
 
   /// Return the second template argument this deduction failure
   /// refers to, if any.
-  const TemplateArgument *getSecondArg();
+  const TemplateArgument *getSecondArg  () const;
 
   /// Return the index of the call argument that this deduction
   /// failure refers to, if any.
-  std::optional<unsigned> getCallArgIndex();
+  std::optional<unsigned> getCallArgIndex() const;
 
   /// Free any memory associated with this deduction failure.
   void Destroy();

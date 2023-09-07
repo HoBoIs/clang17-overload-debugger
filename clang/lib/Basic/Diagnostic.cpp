@@ -39,31 +39,7 @@
 #include <utility>
 #include <vector>
 
-#include "clang/Sema/OverLogger.h"
-//TODO make it to its own file
-namespace overload_debug{
 
-void OverLogger::set_loging(Loging_mode lm){
-    loging=lm;
-};
-void OverLogger::log_message(const char* message){
-    switch (loging){
-	case all:
-	llvm::errs()<<message;
-	break;
-	case none:
-	break;
-	case implicit_only:
-	break;//TODO ()
-	case fun_name:
-	break;//TODO
-    }
-}
-Loging_mode OverLogger::get_logging()const{
-    return loging;
-}
-    OverLogger logger;
-}
 using namespace clang;
 
 const StreamingDiagnostic &clang::operator<<(const StreamingDiagnostic &DB,

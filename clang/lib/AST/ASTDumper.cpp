@@ -11,7 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Sema/OverLogger.h"
 #include "clang/AST/ASTDumper.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclLookups.h"
@@ -203,25 +202,6 @@ LLVM_DUMP_METHOD void Type::dump(llvm::raw_ostream &OS,
 //===----------------------------------------------------------------------===//
 // Decl method implementations
 //===----------------------------------------------------------------------===//
-LLVM_DUMP_METHOD void FunctionDecl::dumpSignature() const{
-  if (!overload_debug::logger.is_loging())
-    return;
-  ASTContext &Ctx = getASTContext();
-  const SourceManager &SM = Ctx.getSourceManager();
-  //ASTDumper P(llvm::errs(), nullptr, nullptr,
-  //            SM.getDiagnostics().getShowColors(), Ctx.getPrintingPolicy());
-  ASTDumper P(llvm::errs(), 
-              SM.getDiagnostics().getShowColors());
-  P.setDeserialize(false);
-  P.doGetNodeDelegate().dumpQualifiedName(this);
-  P.doGetNodeDelegate().dumpType(getType());
-  if (getPrimaryTemplate()){
-    overload_debug::logger<< " [ Specialization of";
-    getPrimaryTemplate()->getTemplatedDecl()->dumpSignature();
-    overload_debug::logger<<" ]";
-  }
-}
-
 LLVM_DUMP_METHOD void Decl::dump() const { dump(llvm::errs()); }
 
 LLVM_DUMP_METHOD void Decl::dump(raw_ostream &OS, bool Deserialize,
