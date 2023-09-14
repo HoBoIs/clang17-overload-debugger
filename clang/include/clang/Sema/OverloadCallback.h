@@ -68,6 +68,6 @@ void atCompareOverloadEnd(OverloadCallbackPtrs &Callbacks, const Sema& TheSema,c
 }
 
 
-}
+} // namespace clang
 
 #endif

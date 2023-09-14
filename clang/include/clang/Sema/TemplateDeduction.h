@@ -272,14 +272,15 @@ struct DeductionFailureInfo {
   /// Retrieve the diagnostic which caused this deduction failure,
   /// if any.
   PartialDiagnosticAt *getSFINAEDiagnostic();
+  const PartialDiagnosticAt *getSFINAEDiagnostic() const;
 
   /// Retrieve the template parameter this deduction failure
   /// refers to, if any.
-  TemplateParameter getTemplateParameter();
+  TemplateParameter getTemplateParameter() const;
 
   /// Retrieve the template argument list associated with this
   /// deduction failure, if any.
-  TemplateArgumentList *getTemplateArgumentList  ();
+  const TemplateArgumentList *getTemplateArgumentList  ()const;
 
   /// Return the first template argument this deduction failure
   /// refers to, if any.

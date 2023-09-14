@@ -1,4 +1,7 @@
 #include "clang/AST/Decl.h"
+#include "clang/AST/DeclCXX.h"
+#include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -8,18 +11,23 @@
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
 #include <iostream>
 #include <iterator>
 #include <optional>
 #include <string>
-#include <vector>
+#include <unordered_map>
+
 using namespace clang;
 
 namespace {
-CodeCompleteConsumer *GetCodeCompletionConsumer_(CompilerInstance &CI) {
+  CodeCompleteConsumer *GetCodeCompletionConsumer_(CompilerInstance &CI) {
   return CI.hasCodeCompletionConsumer() ? &CI.getCodeCompletionConsumer()
                                         : nullptr;
 }
@@ -36,18 +44,52 @@ void EnsureSemaIsCreated_(CompilerInstance &CI, FrontendAction &Action) {
 } // namespace
 
 namespace {
+  struct CandEq{
+    bool operator()(const OverloadCandidate& A,const OverloadCandidate& B)const noexcept{
+      return A.Function==B.Function && A.FoundDecl==B.FoundDecl &&
+        A.ExplicitCallArguments ==B.ExplicitCallArguments &&A.FailureKind==B.FailureKind&&
+        A.RewriteKind == B.RewriteKind && A.Conversions.data()==B.Conversions.data() && 
+        A.IsSurrogate==B.IsSurrogate && (A.IsSurrogate?A.Surrogate==B.Surrogate:1) &&
+        A.Viable==B.Viable && A.Best==B.Best && 
+        A.IgnoreObjectArgument==B.IgnoreObjectArgument && 
+        A.IsADLCandidate==B.IsADLCandidate && A.RewriteKind==B.RewriteKind && 
+        (!A.IsSurrogate && !A.Function?
+         A.BuiltinParamTypes[0]==B.BuiltinParamTypes[0] && 
+         A.BuiltinParamTypes[1]==B.BuiltinParamTypes[1] && 
+         A.BuiltinParamTypes[2]==B.BuiltinParamTypes[2]:1);
+    }
+  };
+struct CandHash{
+    size_t operator()(const OverloadCandidate& C)const noexcept{
+      size_t res=0;
+      if (C.IsSurrogate)
+        res=(res<<1) ^ std::hash<void*>{}(C.Surrogate);
+      else if (C.Function==0){
+        res=(res<<1) ^std::hash<const void*>{}(C.BuiltinParamTypes[0].getTypePtrOrNull());
+        res=(res<<1) ^std::hash<const void*>{}(C.BuiltinParamTypes[1].getTypePtrOrNull());
+        res=(res<<1) ^std::hash<const void*>{}(C.BuiltinParamTypes[2].getTypePtrOrNull());
+      }
+      res=(res<<1) ^ std::hash<void*>{}(C.Conversions.data());
+      res=(res<<1) ^ std::hash<unsigned char>{}(C.FailureKind);
+      res=(res<<1) ^ std::hash<unsigned>{}(C.ExplicitCallArguments);
+      res=(res<<1) ^ std::hash<char>{}(C.Viable|(C.Best<<1)|(C.IsSurrogate<<2)|(C.IgnoreObjectArgument<<3)|((bool)C.IsADLCandidate<<4)|(C.RewriteKind<<5));
+      res=(res<<1) ^ std::hash<void*>{}(C.FoundDecl);
+      res=(res<<1) ^ std::hash<void*>{}(C.Function);
+      return res;
+    }
+  };
+
+
 struct OvdlCandEntry{
   std::string declLocation;
-  std::string nameSignature;
+  std::string name;
+  std::string signature;
   std::optional<std::string> templateSource;
   //std::string Concepts; ???
-  bool builtIn=0;
-  bool Viable;
-  OverloadFailureKind failKind;
-  std::string extraFailInfo;
-  static bool extraInfoHidden;
+  //bool builtIn=0;
+  std::optional<OverloadFailureKind> failKind;
+  std::optional<std::string> extraFailInfo;
 };
-bool OvdlCandEntry::extraInfoHidden=true;
 struct OvdlCompareEntry {
   OvdlCandEntry C1,C2;
   std::string reason;
@@ -59,10 +101,11 @@ struct OvdlCompareEntry {
 struct OvdlResEntry{
   std::vector<OvdlCandEntry> viableCandidates,nonViableCandidates;
   std::optional<OvdlCandEntry> best;
-  std::optional<OvdlCandEntry> problem;
+  std::vector<OvdlCandEntry> problems;
   std::vector<OvdlCompareEntry> compares;
   std::string callLocation;
   std::string callSignature;
+  clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
   //static bool extraInfoHidden;
   static bool showCompares;
@@ -83,13 +126,6 @@ public:
   using iterator=std::vector<OvdlResNode>::iterator;
   iterator begin() { return data.begin();}
   iterator end() { return data.end();}
-  OvdlResCont filterByLine(int lineBeg=-1, int lineEnd=-1) const{
-    if (lineEnd==-1) lineEnd=lineBeg+1;
-    if (lineBeg==-1) return *this; 
-    return filterByFun([lineBeg,lineEnd](OvdlResNode& x){
-      return !((unsigned)lineBeg<= x.line && (unsigned)lineEnd> x.line);
-    });
-  }
   OvdlResCont filter() const{
     return filterByFun([this](const OvdlResNode& x){
       return !(x.line>=filterSettings.lineFrom && x.line<filterSettings.lineTo &&
@@ -113,6 +149,14 @@ LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvdlCandEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlCompareEntry);
 namespace llvm{
 namespace yaml{
+template <> struct ScalarEnumerationTraits<OverloadingResult>{
+  static void enumeration(IO& io, OverloadingResult& val){
+    io.enumCase(val,"Success" ,OR_Success);
+    io.enumCase(val,"NoViableFunction" ,OR_No_Viable_Function);
+    io.enumCase(val,"Deleted" ,OR_Deleted);
+    io.enumCase(val,"Ambigius" ,OR_Ambiguous);
+  }
+};
 template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
   static void enumeration(IO& io, BetterOverloadCandidateReason& val){
       io.enumCase(val,"viability",viability);
@@ -157,20 +201,20 @@ template <> struct ScalarEnumerationTraits<clang::OverloadFailureKind>{
 };
 template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
-    io.mapRequired("Name and signature",fields.nameSignature);
+    io.mapRequired("Name",fields.name);
+    io.mapRequired("Signature",fields.signature);
     io.mapRequired("declLocation",fields.declLocation);
     if (fields.templateSource){
       io.mapOptional("templateSource", *fields.templateSource);
     }
-    if (!OvdlCandEntry::extraInfoHidden){
-      io.mapOptional("Viable", fields.Viable);
+    /*if (!OvdlCandEntry::extraInfoHidden){
       io.mapOptional("Builtin", fields.builtIn);
-    }
-    if (!fields.Viable){
-      io.mapOptional("FailureKind", fields.failKind);
-      if (fields.extraFailInfo!="")
-        io.mapOptional("extraFailInfo", fields.extraFailInfo);
-    }
+    }*/
+
+    if (fields.failKind)
+      io.mapOptional("FailureKind", *fields.failKind);
+    if (fields.extraFailInfo)
+      io.mapOptional("extraFailInfo", *fields.extraFailInfo);
   }
 };
 template <>
@@ -194,13 +238,14 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapRequired("callLocation",fields.callLocation);
     io.mapRequired("callSignature",fields.callSignature);
     io.mapRequired("callTypes",fields.callTypes);
+    io.mapRequired("overloading result",fields.ovRes);
     io.mapRequired("viable candidates",fields.viableCandidates);
-    if (fields.showNonViable)
-      io.mapRequired("non viable candidates",fields.nonViableCandidates);
+    if (OvdlResEntry::showNonViable)
+      io.mapOptional("non viable candidates",fields.nonViableCandidates);
     if (fields.best)
       io.mapOptional("best",*fields.best);
-    if (fields.problem)
-      io.mapOptional("problem",*fields.problem);
+    if (fields.problems.size())
+      io.mapOptional("problems",fields.problems);
     if (OvdlResEntry::showCompares)
       io.mapOptional("compares",fields.compares);
   }
@@ -210,6 +255,42 @@ template <> struct MappingTraits<OvdlResEntry>{
 }//namespace llvm
 
 namespace{
+std::string toString(Sema::TemplateDeductionResult r){
+  switch (r) {
+  case Sema::TDK_Success: return "TDK_Success";
+  case Sema::TDK_Invalid: return "TDK_Invalid";
+  case Sema::TDK_InstantiationDepth: return "TDK_InstantiationDepth";
+  case Sema::TDK_Incomplete: return "TDK_Incomplete";
+  case Sema::TDK_IncompletePack: return "TDK_IncompletePack";
+  case Sema::TDK_Inconsistent: return "TDK_Inconsistent";
+  case Sema::TDK_Underqualified: return "TDK_Underqualified";
+  case Sema::TDK_SubstitutionFailure: return "TDK_SubstitutionFailure";
+  case Sema::TDK_DeducedMismatch: return "TDK_DeducedMismatch";
+  case Sema::TDK_DeducedMismatchNested: return "TDK_DeducedMismatchNested";
+  case Sema::TDK_NonDeducedMismatch: return "TDK_NonDeducedMismatch";
+  case Sema::TDK_TooManyArguments: return "TDK_TooManyArguments";
+  case Sema::TDK_TooFewArguments: return "TDK_TooFewArguments";
+  case Sema::TDK_InvalidExplicitArguments: return "TDK_InvalidExplicitArguments";
+  case Sema::TDK_NonDependentConversionFailure: return "TDK_NonDependentConversionFailure";
+  case Sema::TDK_ConstraintsNotSatisfied: return "TDK_ConstraintsNotSatisfied";
+  case Sema::TDK_MiscellaneousDeductionFailure: return "TDK_MiscellaneousDeductionFailure";
+  case Sema::TDK_CUDATargetMismatch: return "TDK_CUDATargetMismatch";
+  case Sema::TDK_AlreadyDiagnosed: return "TDK_AlreadyDiagnosed";
+  }
+llvm_unreachable("unknown TemplateDeductionResult");
+}
+std::string toString(BadConversionSequence::FailureKind k){
+  switch (k) {
+  case BadConversionSequence::no_conversion: return "no_conversion";
+  case BadConversionSequence::unrelated_class: return "unrelated_class";
+  case BadConversionSequence::bad_qualifiers: return "bad_qualifiers";
+  case BadConversionSequence::lvalue_ref_to_rvalue: return "lvalue_ref_to_rvalue";
+  case BadConversionSequence::rvalue_ref_to_lvalue: return "rvalue_ref_to_lvalue";
+  case BadConversionSequence::too_few_initializers: return "too_few_initializers";
+  case BadConversionSequence::too_many_initializers: return "too_many_initializers";
+  }
+llvm_unreachable("unknown FaliureKind");
+}
 std::string toString(BetterOverloadCandidateReason r){
   switch(r){
     case viability:
@@ -334,25 +415,24 @@ public:
     Entry.reason=toString(reason);
     compares.push_back(Entry);
   }
-  std::string getExtraFailInfo(const OverloadCandidate& C){
-    if (C.Viable) return "";
+  std::optional<std::string> getExtraFailInfo(const OverloadCandidate& C){
+    if (C.Viable) return {};
     switch ((OverloadFailureKind)C.FailureKind) {
     case ovl_fail_too_many_arguments:
     case ovl_fail_too_few_arguments:
-      return "";
+      return {};
     case ovl_fail_bad_conversion:
-      for (int i=0; i!=C.Conversions.size(); i++){
+      for (size_t i=0; i!=C.Conversions.size(); i++){
+        if (!C.Conversions[i].isInitialized())continue;
         if (C.Conversions[i].isBad()){
-          return "Pos: "+std::to_string(i)+
+          return toString(C.Conversions[i].Bad.Kind)+" Pos: "+std::to_string(i)+
             "    From: "+C.Conversions[i].Bad.getFromType().getAsString()+
             "    To: "+C.Conversions[i].Bad.getToType().getAsString();
         }
       }
-      return "";
+      return {};
     case ovl_fail_bad_deduction:
-      if (const auto& x=C.DeductionFailure.getCallArgIndex()){
-        return "At pos "+std::to_string(*x);
-      }else return "";
+      return toString((Sema::TemplateDeductionResult)C.DeductionFailure.Result);
     case ovl_fail_trivial_conversion:
     case ovl_fail_illegal_constructor:
     case ovl_fail_bad_final_conversion:
@@ -368,49 +448,70 @@ public:
     case ovl_fail_module_mismatched:
       break;
     }
-    return "";
+    return {};
   }
   OvdlCandEntry getCandEntry(const OverloadCandidate& C){
+    static std::unordered_map<OverloadCandidate, OvdlCandEntry,CandHash,CandEq> mp;
+    if (mp.find(C)!=mp.end()){
+      return mp[C];
+    }
     OvdlCandEntry res;
-    res.Viable=C.Viable;
-    res.failKind=(OverloadFailureKind)C.FailureKind;
+    if (!C.Viable)
+      res.failKind=(OverloadFailureKind)C.FailureKind;
+    else
+      res.failKind={};
     res.extraFailInfo=getExtraFailInfo(C);
     if (C.IsSurrogate){
       if (C.FoundDecl.getDecl()!=0){
-        res.nameSignature=C.FoundDecl.getDecl()->getQualifiedNameAsString();
+        res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
       } 
       res.declLocation="Surrogate ";
       res.declLocation+=C.Surrogate->getLocation().printToString(S->SourceMgr);
+      mp[C]=res;
       return res;
     }
 
     if (C.FoundDecl.getDecl()==0) {
       res.declLocation="Built-in";
-      res.builtIn=1;
+      //res.builtIn=1;
       for (const auto& tmp:C.BuiltinParamTypes){
         if (tmp.getAsString()!="NULL TYPE")
-          res.nameSignature+=tmp.getAsString()+" ";
+          res.signature+=tmp.getAsString()+" ";
       }
+      mp[C]=res;
       return res;
     }
     res.declLocation=C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
     //res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
-    res.nameSignature=C.FoundDecl.getDecl()->getQualifiedNameAsString();
+    res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
-      res.nameSignature+=" - "+getSignature(C);
+      if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
+        if (mp->isInstance())
+          res.signature=mp->getThisObjectType().getAsString()+"; ";
+      }
       res.templateSource=getTemplate(C);
+      res.signature+=getSignature(C);
       if (res.templateSource=="") res.templateSource={};
       //res.nameSignature+=" - "+getSignature(*C.Function);
     }else{
-      llvm::errs()<<"\n"<<res.nameSignature<<"";
+      llvm::errs()<<"\n"<<res.name<<"";
       llvm::errs()<<"\n"<<res.declLocation<<"\n";
       /*TODO can't reach??? */
     }
+    mp[C]=res;
     return res;
   }
   std::string getTemplate(const OverloadCandidate& C){
-    const FunctionDecl* f=C.FoundDecl->getAsFunction();
-    if (!f->isTemplated() ) return "";
+    const NamedDecl* nd=C.FoundDecl.getDecl();
+    while (isa<UsingShadowDecl>(nd)){
+      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
+      //llvm::errs()<<"X";
+    }
+    const FunctionDecl* f=nd->getAsFunction();
+    /*TODO if !f*/
+    //if (isa<UsingShadowDecl>(*C.FoundDecl)) llvm::errs()<<"USD";
+    if (!f)llvm::errs()<<C.FoundDecl->getLocation().printToString(S->SourceMgr)<<'\n';
+    if (!f||!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
     r.setEnd(f->getTypeSpecEndLoc());
@@ -429,19 +530,33 @@ public:
     return std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
   }
   std::string getSignature(const OverloadCandidate& C) const{
-    const FunctionDecl* f=C.Function;
-    return f->getType().getAsString();
+    //const FunctionDecl* f=C.Function;
+    std::string res;
+    C.Function->isCXXInstanceMember();
+    if (!C.Function->param_empty()){
+      res+=C.Function->parameters()[0]->getType().getAsString();
+      if (C.Function->parameters()[0]->hasDefaultArg()) res+="=def";
+      for (const auto& x:llvm::drop_begin(C.Function->parameters())){
+        res+=", ";
+        res+=x->getType().getAsString();
+        if (x->hasDefaultArg()) res+="=def";
+      }
+    }
+    return res;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres, const OverloadCandidate* BestOrProblem){
     OvdlResEntry res;
-
+    res.ovRes=ovres;
     if (ovres==OR_Success) {
       res.best=getCandEntry(*BestOrProblem);
-      res.problem={};
+      res.problems={};
+    }else if (ovres==clang::OR_Ambiguous){
+      res.best={};
+      res.problems={getCandEntry(BestOrProblem[0]),getCandEntry(BestOrProblem[1])};
     }else{
       res.best={};
       if (BestOrProblem)
-        res.problem=getCandEntry(*BestOrProblem);
+        res.problems={getCandEntry(*BestOrProblem)};
     }
     res.callLocation=Loc->printToString(S->SourceMgr);
     SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,S->getSourceManager() , S->getLangOpts()));
@@ -450,13 +565,17 @@ public:
     SourceLocation endloc02=Set->getEndLoc();
     //SourceRange objParamRange=Set->getObjectParamRange();
     SourceLocation begloc=*Loc;
-    if (!Args.empty() && Args[0]->getBeginLoc()<begloc){
+    if (Args.size()==1 && Args[0] && isa< clang::InitListExpr>(Args[0])){
+      const clang::InitListExpr* p=llvm::dyn_cast<const clang::InitListExpr>(Args[0]);
+      Args=p->inits();
+    }
+    if (!Args.empty()&&Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
       begloc=Args[0]->getBeginLoc();
     }
     /*if (objParamRange!=SourceRange() && objParamRange.getBegin()<begloc){
       begloc=objParamRange.getBegin();
     }*/
-    if (!Args.empty()){
+    if (!Args.empty()&& Args.back()!=0){
       SourceLocation endloc1(Lexer::getLocForEndOfToken(Args.back()->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
       if (endloc<endloc1) endloc=endloc1;
     }
@@ -466,77 +585,30 @@ public:
     }
     range=CharSourceRange::getCharRange(begloc,endloc);
     res.callSignature=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
-    /*
-    if (Args.empty() && SourceRange()==objParamRange){
-      res.callSignature="(FormLocation) ";
-      range=CharSourceRange::getCharRange(*Loc,endloc);
-      res.callSignature+=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
-    }else{
-      res.callSignature="";
-      if (objParamRange!=SourceRange()){
-        res.callSignature="this=";
-        SourceLocation endloc(Lexer::getLocForEndOfToken(objParamRange.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
-        CharSourceRange cr=CharSourceRange::getCharRange(objParamRange.getBegin(),endloc);
-        res.callSignature+=Lexer::getSourceText(cr, S->getSourceManager(), S->getLangOpts());
-        res.callSignature+="; ";
-      }
-      if (!Args.empty()){
-        SourceLocation endloc(Lexer::getLocForEndOfToken(Args.back()->getSourceRange().getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
-        range=CharSourceRange::getCharRange(Args[0]->getSourceRange().getBegin(),endloc);
-        res.callSignature+=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
-      }//range=CharSourceRange::getCharRange(Set->getSourceRange().getBegin(),Set->getSourceRange().getEnd());
-    }*/
     if (Set->getObjectParamType()!=QualType()) {
-      res.callTypes.push_back("(ObjectParam:"+Set->getObjectParamType().getAsString()+")");
+      res.callTypes.push_back("(Obj:"+Set->getObjectParamType().getAsString()+")");
     }
     for (const auto& x:Args){
-      res.callTypes.push_back(x->getType().getAsString());
+      if (x==0) {res.callTypes.push_back("NULL"); continue;}
+      if (isa<CXXBoolLiteralExpr,CXXNullPtrLiteralExpr,CharacterLiteral,CompoundLiteralExpr
+          ,FixedPointLiteral,FloatingLiteral,ImaginaryLiteral,IntegerLiteral,ObjCArrayLiteral
+          ,ObjCBoolLiteralExpr,ObjCDictionaryLiteral,ObjCStringLiteral,StringLiteral>(x))
+        res.callTypes.push_back(x->getType().getAsString()+" literal");
+      else
+        res.callTypes.push_back(x->getType().getAsString());
+      if (!x->isLValue()) res.callTypes.back()+="!LV ";
     }
     S->getSourceManager();
     for (const auto& cand:*Set){
-      if (cand.Viable){
+      if (cand.Viable)
         res.viableCandidates.push_back(getCandEntry(cand));
-        /*if (res.callTypes.empty()){
-          for (const auto&x: cand.Conversions){
-            if (x.isInitialized()==false){
-              if (!BestOrProblem->IgnoreObjectArgument){
-                //I'm 95% sure this is unreachable
-                llvm::errs()<<"This was not supposed to happen\n uninitialized concersion not for ignored object argument";
-              }
-              res.callTypes.push_back({"(Ignored)"});
-              //llvm::outs()<<"Not inited "+res.best->nameSignature;
-              continue;
-            }
-            switch (x.getKind()) {
-            case ImplicitConversionSequence::StandardConversion:
-              res.callTypes.emplace_back(x.Standard.getFromType().getAsString());
-              break;
-            case ImplicitConversionSequence::StaticObjectArgumentConversion:
-              res.callTypes.push_back({"(Ignored)"});
-              break;
-            case ImplicitConversionSequence::UserDefinedConversion:
-              res.callTypes.push_back(x.UserDefined.Before.getFromType().getAsString());
-              break;
-            case ImplicitConversionSequence::AmbiguousConversion:
-              res.callTypes.push_back({"AmbigiusConversion"});
-              break;
-            case ImplicitConversionSequence::EllipsisConversion:
-              res.callTypes.push_back({"EllipsisConversion"});
-              break;
-            case ImplicitConversionSequence::BadConversion:
-              res.callTypes.push_back({"BadConversion"});
-              break;
-            }
-          }
-        }*/
-      }
       else
         res.nonViableCandidates.push_back(getCandEntry(cand));
     }
     return res;
   }
   };
-}//namespace
+  }//namespace
 std::unique_ptr<ASTConsumer>
 OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
     return std::make_unique<ASTConsumer>();

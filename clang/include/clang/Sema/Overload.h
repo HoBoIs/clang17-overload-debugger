@@ -1054,7 +1054,7 @@ class Sema;
     SourceLocation Loc;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
-    std::vector<Expr*> Args;//Make an owning structure. (Cope the data too???)
+    llvm::SmallVector<Expr*> Args;//Make an owning structure. (Cope the data too???)
     QualType ObjectParamType;
     SourceLocation EndLoc;
     
