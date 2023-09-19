@@ -17,6 +17,7 @@
 #include "clang/AST/ExprOpenMP.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/Designator.h"
@@ -10628,7 +10629,7 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
   // Since we know we're initializing a class type of a type unrelated to that
   // of the initializer, this reduces to something fairly reasonable.
   OverloadCandidateSet Candidates(Kind.getLocation(),
-                                  OverloadCandidateSet::CSK_Normal,Inits);
+                                  OverloadCandidateSet::CSK_Normal,Inits,PL?PL->getRParenLoc():SourceLocation());
   OverloadCandidateSet::iterator Best;
 
   bool AllowExplicit = !Kind.isCopyInit() || ListInit;

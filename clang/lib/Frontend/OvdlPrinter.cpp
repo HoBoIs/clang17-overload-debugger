@@ -7,9 +7,11 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Frontend/FrontendOptions.h"
 #include "clang/Frontend/OvdlFilter.h"
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/OverloadCallback.h"
+#include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -27,19 +29,19 @@
 using namespace clang;
 
 namespace {
-  CodeCompleteConsumer *GetCodeCompletionConsumer_(CompilerInstance &CI) {
+  CodeCompleteConsumer *GetCodeCompletionConsumer(CompilerInstance &CI) {
   return CI.hasCodeCompletionConsumer() ? &CI.getCodeCompletionConsumer()
                                         : nullptr;
 }
 
-void EnsureSemaIsCreated_(CompilerInstance &CI, FrontendAction &Action) {
+void EnsureSemaIsCreated(CompilerInstance &CI, FrontendAction &Action) {
   if (Action.hasCodeCompletionSupport() &&
       !CI.getFrontendOpts().CodeCompletionAt.FileName.empty())
     CI.createCodeCompletionConsumer();
 
   if (!CI.hasSema())
     CI.createSema(Action.getTranslationUnitKind(),
-                  GetCodeCompletionConsumer_(CI));
+                  GetCodeCompletionConsumer(CI));
 }
 } // namespace
 
@@ -107,13 +109,8 @@ struct OvdlResEntry{
   std::string callSignature;
   clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
-  //static bool extraInfoHidden;
-  static bool showCompares;
-  static bool showNonViable;
 };
 //bool OvdlResEntry::extraInfoHidden=1;
-bool OvdlResEntry::showCompares=true;
-bool OvdlResEntry::showNonViable=true;
 struct OvdlResNode{
   OvdlResEntry Entry;
   size_t line;
@@ -160,6 +157,7 @@ template <> struct ScalarEnumerationTraits<OverloadingResult>{
 template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
   static void enumeration(IO& io, BetterOverloadCandidateReason& val){
       io.enumCase(val,"viability",viability);
+      io.enumCase(val,"CUDAEmit",CUDAEmit);
       io.enumCase(val,"betterConversion",betterConversion);
       io.enumCase(val,"betterImplicitConversion",betterImplicitConversion);
       io.enumCase(val,"constructor",constructor);
@@ -169,6 +167,7 @@ template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
       io.enumCase(val,"derivedFromOther",derivedFromOther);
       io.enumCase(val,"RewriteKind",RewriteKind);
       io.enumCase(val,"guideImplicit",guideImplicit);
+      io.enumCase(val,"guideTemplated",guideTemplated);
       io.enumCase(val,"guideCopy",guideCopy);
       io.enumCase(val,"enableIf",enableIf);
       io.enumCase(val,"parameterObjectSize",parameterObjectSize);
@@ -240,13 +239,13 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapRequired("callTypes",fields.callTypes);
     io.mapRequired("overloading result",fields.ovRes);
     io.mapRequired("viable candidates",fields.viableCandidates);
-    if (OvdlResEntry::showNonViable)
+    if (!fields.nonViableCandidates.empty())
       io.mapOptional("non viable candidates",fields.nonViableCandidates);
     if (fields.best)
       io.mapOptional("best",*fields.best);
-    if (fields.problems.size())
+    if (!fields.problems.empty())
       io.mapOptional("problems",fields.problems);
-    if (OvdlResEntry::showCompares)
+    if (!fields.compares.empty())
       io.mapOptional("compares",fields.compares);
   }
 };
@@ -295,6 +294,8 @@ std::string toString(BetterOverloadCandidateReason r){
   switch(r){
     case viability:
     return "viability";
+  case CUDAEmit:
+    return "CUDAEmit";
   case betterConversion:
     return "betterConversion";
   case betterImplicitConversion:
@@ -315,6 +316,8 @@ std::string toString(BetterOverloadCandidateReason r){
     return "guideImplicit";
   case guideCopy:
     return "guideCopy";
+  case guideTemplated:
+    return "guideTemplated";
   case enableIf:
     return "enableIf";
   case parameterObjectSize:
@@ -349,11 +352,16 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   const SourceLocation* Loc=nullptr;
   std::vector<OvdlCompareEntry> compares;
   OvdlResCont cont;
+  clang::FrontendOptions::OvdlSettingsC settings;
+  //CompilerInstance& ci=CompilerInstance();
 public:
+  void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){settings=s; llvm::errs()<<s.LineTo<<"\n";};
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
   virtual void atEnd() override{
-    std::string message;
+    for (auto& x:cont)
+      displayOvdlResEntry(llvm::outs(),x.Entry);
+    /*std::string message;
     bool exiting=0;
     std::string commangs="exit/q; Fname/FN string; showEmpty/sE bool; lineFrom/lF uint; lineTo/lT uint; showCompares/sC bool; showNonViable/sNV bool; list/l\n";
     do {
@@ -382,7 +390,7 @@ public:
       }else{
         llvm::outs()<<"invalid\n";
       }
-    }while (!exiting);
+    }while (!exiting);*/
   }
   virtual void atOverloadBegin(const Sema&s,const SourceLocation& loc,const OverloadCandidateSet& set) override{
     S=&s;
@@ -395,11 +403,19 @@ public:
         const OverloadCandidate* BestOrProblem) override{
     //TOFIX
     OvdlResNode node;
+    PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
+    node.line=L.getLine();
+    node.Fname=L.getFilename();
+    if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
+        node.line < settings.LineFrom || 
+        (node.line > settings.LineTo && settings.LineTo>0) ||
+        (!settings.ShowEmptyOverloads && set.empty())) {
+      compares={};
+      return;
+    }
     node.Entry=getResEntry(res,BestOrProblem);
     node.Entry.compares=std::move(compares);
     compares={};
-    node.line=S->getSourceManager().getPresumedLoc(loc).getLine();
-    node.Fname=S->getSourceManager().getPresumedLoc(loc).getFilename();
     cont.add(node);
     inBestOC=0;
   }
@@ -408,6 +424,15 @@ public:
   }
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
         const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason) override {
+    if (!inBestOC || !settings.ShowCompares) {return;}
+    PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
+    if (!L.isValid()){
+
+    }
+    if (!L.isValid() || (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
+        L.getLine() < settings.LineFrom || 
+        (L.getLine() > settings.LineTo && settings.LineTo>0)) 
+      return;
     OvdlCompareEntry Entry;
     Entry.C1Better=res;
     Entry.C1=getCandEntry(Cand1);
@@ -565,11 +590,15 @@ public:
     SourceLocation endloc02=Set->getEndLoc();
     //SourceRange objParamRange=Set->getObjectParamRange();
     SourceLocation begloc=*Loc;
-    if (Args.size()==1 && Args[0] && isa< clang::InitListExpr>(Args[0])){
+    if (Args.size() == 1 && Args[0]==nullptr){
+      //The Inplicit call after class definition
+      Args={};
+    }
+    if (Args.size()==1 && isa< clang::InitListExpr>(Args[0])){
       const clang::InitListExpr* p=llvm::dyn_cast<const clang::InitListExpr>(Args[0]);
       Args=p->inits();
     }
-    if (!Args.empty()&&Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
+    if (!Args.empty() && Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
       begloc=Args[0]->getBeginLoc();
     }
     /*if (objParamRange!=SourceRange() && objParamRange.getBegin()<begloc){
@@ -602,7 +631,7 @@ public:
     for (const auto& cand:*Set){
       if (cand.Viable)
         res.viableCandidates.push_back(getCandEntry(cand));
-      else
+      else if (settings.ShowNonViableCands)
         res.nonViableCandidates.push_back(getCandEntry(cand));
     }
     return res;
@@ -616,9 +645,11 @@ OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
 void OvdlDumpAction::ExecuteAction(){
 
   CompilerInstance &CI = getCompilerInstance();
-  EnsureSemaIsCreated_(CI, *this);
-  CI.getSema().OverloadCallbacks.push_back(
-      std::make_unique<DefaultOverloadInstCallback>());
+  EnsureSemaIsCreated(CI, *this);
+  auto x=std::make_unique<DefaultOverloadInstCallback>();
+  llvm::errs()<<"X"<<CI.getFrontendOpts().OvdlSettings.LineFrom<<"X\n";
+  x->setSettings(CI.getFrontendOpts().OvdlSettings);
+  CI.getSema().OverloadCallbacks.push_back(std::move(x));
   ASTFrontendAction::ExecuteAction();
 }
 

@@ -3820,7 +3820,7 @@ static bool resolveBuiltinNewDeleteOverload(Sema &S, CallExpr *TheCall,
 
   SmallVector<Expr *, 8> Args(TheCall->arguments());
   OverloadCandidateSet Candidates(R.getNameLoc(),
-                                  OverloadCandidateSet::CSK_Normal,Args);
+                                  OverloadCandidateSet::CSK_Normal,Args,TheCall->getEndLoc());
   for (LookupResult::iterator FnOvl = R.begin(), FnOvlEnd = R.end();
        FnOvl != FnOvlEnd; ++FnOvl) {
     // Even member operator new/delete are implicitly treated as

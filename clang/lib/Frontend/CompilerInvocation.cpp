@@ -2476,6 +2476,7 @@ static const auto &getFrontendActionTable() {
       {frontend::PrintPreamble, OPT_print_preamble},
       {frontend::PrintPreprocessedInput, OPT_E},
       {frontend::TemplightDump, OPT_templight_dump},
+      {frontend::OvdlDump, OPT_ovdl_dump_opt},
       {frontend::OvdlDump, OPT_ovdl_dump},
       {frontend::RewriteMacros, OPT_rewrite_macros},
       {frontend::RewriteObjC, OPT_rewrite_objc},
@@ -2537,6 +2538,21 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
     };
   }
 
+  if (Opts.ProgramAction == frontend::OvdlDump) {
+    llvm::errs()<<"$"<<Opts.OvdlSettings.LineTo<<" ";
+    GenerateProgramAction = [&]() {
+      
+      GenerateArg(Args, OPT_ovdl_dump_opt, 
+          std::to_string(Opts.OvdlSettings.LineFrom)+"-"+
+          std::to_string(Opts.OvdlSettings.LineTo)+
+          std::string(Opts.OvdlSettings.ShowEmptyOverloads?",ShowEmptyOverloads":",HideEmptyOverloads")+
+          std::string(Opts.OvdlSettings.ShowCompares?",ShowCompares":",HideCompares")+
+          std::string(Opts.OvdlSettings.ShowIncludes?",ShowIncludes":",HideIncludes")+
+          std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands"), 
+          SA);
+    };
+
+  }
   // FIXME: Simplify the complex 'AST dump' command line.
   if (Opts.ProgramAction == frontend::ASTDump) {
     GenerateProgramAction = [&]() {
@@ -2714,6 +2730,67 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 
     if (ProgramAction == frontend::FixIt && Opt == OPT_fixit_EQ)
       Opts.FixItSuffix = A->getValue();
+    if (ProgramAction == frontend::OvdlDump){
+      llvm::errs()<<" '"<<'j'<<"' ";
+      if (Opt== OPT_ovdl_dump){
+        llvm::errs()<<" 2 ";
+      }
+    }
+    if (ProgramAction == frontend::OvdlDump && Opt == OPT_ovdl_dump_opt){
+      const auto& x=A->getValues();
+      llvm::errs()<<A->getNumValues()<<"=AV";
+      for (const auto& y:x){
+        llvm::errs()<<" '"<<y<<"' ";
+        const std::string s=y;
+        if (s=="ShowNonViableCands"){
+          Opts.OvdlSettings.ShowNonViableCands=1;
+        } else if (s=="HideNonViableCands"){
+          Opts.OvdlSettings.ShowNonViableCands=0;
+        } else if (s=="ShowIncludes"){
+          Opts.OvdlSettings.ShowIncludes=1;
+        } else if (s=="HideIncludes"){
+          Opts.OvdlSettings.ShowIncludes=0;
+        } else if (s=="ShowCompares"){
+          Opts.OvdlSettings.ShowCompares=1;
+        } else if (s=="HideCompares"){
+          Opts.OvdlSettings.ShowCompares=0;
+        } else if (s=="ShowEmptyOverloads"){
+          Opts.OvdlSettings.ShowEmptyOverloads=1;
+        } else if (s=="HideEmptyOverloads"){
+          Opts.OvdlSettings.ShowEmptyOverloads=0;
+        } else {
+          unsigned lF=0,lT=0;
+          unsigned actual=0;
+          bool lFfinished=false;
+          bool valid=true;
+          for (const char& c:s){
+            if (c=='-'){
+              if (lFfinished){
+                valid=false;
+                break;
+              }else{
+                lFfinished=true;
+                lF=actual;
+                actual=0;
+              }
+            }else if(c>='0' && c<='9'){
+              actual=10*actual+c-'0';
+            }else{
+              valid=false;
+              break;
+            }
+          }
+          if (valid && lFfinished){
+            lT=actual;
+            Opts.OvdlSettings.LineFrom=lF;
+            Opts.OvdlSettings.LineTo=lT;
+            llvm::errs()<<lF<<" "<<lT<<" ";
+          }else{
+            llvm::errs()<<"unkonwn param: "<<s<<'\n';
+          }
+        } 
+      }
+    }
 
     if (ProgramAction == frontend::GenerateInterfaceStubs) {
       StringRef ArgStr =
@@ -4501,13 +4578,16 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Invocation,
                                         const char *Argv0) {
   CompilerInvocation DummyInvocation;
 
+  llvm::errs()<<"A";
   return RoundTrip(
       [](CompilerInvocation &Invocation, ArrayRef<const char *> CommandLineArgs,
          DiagnosticsEngine &Diags, const char *Argv0) {
+  llvm::errs()<<"Y";
         return CreateFromArgsImpl(Invocation, CommandLineArgs, Diags, Argv0);
       },
       [](CompilerInvocation &Invocation, SmallVectorImpl<const char *> &Args,
          StringAllocator SA) {
+  llvm::errs()<<"X";
         Args.push_back("-cc1");
         Invocation.generateCC1CommandLine(Args, SA);
       },

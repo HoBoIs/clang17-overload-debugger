@@ -74,7 +74,7 @@ CreateFrontendBaseAction(CompilerInstance &CI) {
   case ParseSyntaxOnly:        return std::make_unique<SyntaxOnlyAction>();
   case ModuleFileInfo:         return std::make_unique<DumpModuleInfoAction>();
   case VerifyPCH:              return std::make_unique<VerifyPCHAction>();
-  case OvdlDump: 	       return std::make_unique<OvdlDumpAction>();
+  case OvdlDump:               return std::make_unique<OvdlDumpAction>();
   case TemplightDump:          return std::make_unique<TemplightDumpAction>();
 
   case PluginAction: {

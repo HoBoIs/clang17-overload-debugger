@@ -9938,11 +9938,11 @@ bool clang::isBetterOverloadCandidate(
       auto Cand1Emittable = P1 > EmitThreshold;
       auto Cand2Emittable = P2 > EmitThreshold;
       if (Cand1Emittable && !Cand2Emittable){
-        //TODO HBI atCompareOverloadEnd
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,CUDAEmit);
         return true;
       }
       if (!Cand1Emittable && Cand2Emittable){
-        //TODO HBI atCompareOverloadEnd
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,CUDAEmit);
         return false;
       }
     }
@@ -10226,17 +10226,24 @@ bool clang::isBetterOverloadCandidate(
         return true;
       }
       if (Guide2->getDeductionCandidateKind() == DeductionCandidate::Copy){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,guideCopy);
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,guideTemplated);
         return false;
       }
-      const auto* Constructor1=Guide1->getCorrespondingConstructor();
-      const auto* Constructor2=Guide2->getCorrespondingConstructor();
-      bool isC1Templated=(Constructor1 && Constructor1->getTemplatedKind()!=FunctionDecl::TemplatedKind::TK_NonTemplate);
-      bool isC2Templated=(Constructor2 && Constructor2->getTemplatedKind()!=FunctionDecl::TemplatedKind::TK_NonTemplate);
-      if (isC1Templated!=isC2Templated){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,isC2Templated,guideCopy);
-        return isC2Templated;
-      }
+
+      //  --F1 is generated from a non-template constructor and F2 is generated
+      //  from a constructor template
+      const auto *Constructor1 = Guide1->getCorrespondingConstructor();
+      const auto *Constructor2 = Guide2->getCorrespondingConstructor();
+      if (Constructor1 && Constructor2) {
+        bool isC1Templated = Constructor1->getTemplatedKind() !=
+                             FunctionDecl::TemplatedKind::TK_NonTemplate;
+        bool isC2Templated = Constructor2->getTemplatedKind() !=
+                             FunctionDecl::TemplatedKind::TK_NonTemplate;
+        if (isC1Templated != isC2Templated){
+          atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,isC2Templated,guideCopy);
+          return isC2Templated;
+        }
+      }    
     }
   }
 

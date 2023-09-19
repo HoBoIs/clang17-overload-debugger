@@ -516,6 +516,15 @@ public:
   /// Path which stores the output files for -ftime-trace
   std::string TimeTracePath;
 
+  struct OvdlSettingsC{
+    unsigned LineFrom,LineTo;
+    unsigned ShowNonViableCands:1;
+    unsigned ShowIncludes:1;
+    unsigned ShowCompares:1;
+    unsigned ShowEmptyOverloads:1;
+  }OvdlSettings;
+
+
 public:
   FrontendOptions()
       : DisableFree(false), RelocatablePCH(false), ShowHelp(false),
@@ -528,7 +537,7 @@ public:
         BuildingImplicitModuleUsesLock(true), ModulesEmbedAllFiles(false),
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
-        TimeTraceGranularity(500) {}
+        TimeTraceGranularity(500),OvdlSettings({0,0,1,0,1,0}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.

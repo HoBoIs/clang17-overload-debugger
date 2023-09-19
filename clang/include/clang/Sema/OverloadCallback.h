@@ -6,9 +6,9 @@
 namespace clang{
 
 enum BetterOverloadCandidateReason{
-  viability,betterConversion,betterImplicitConversion,
+  viability,CUDAEmit,betterConversion,betterImplicitConversion,
   constructor,isSpecialization,moreSpecialized,isInherited,
-  derivedFromOther,RewriteKind,guideImplicit,guideCopy,enableIf,
+  derivedFromOther,RewriteKind,guideImplicit,guideCopy,guideTemplated,enableIf,
   parameterObjectSize,multiversion,CUDApreference,addressSpace,inconclusive
 };
 class OverloadCallback{

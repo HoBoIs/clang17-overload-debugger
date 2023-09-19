@@ -6325,6 +6325,11 @@ def ast_dump_decl_types : Flag<["-"], "ast-dump-decl-types">,
   MarshallingInfoFlag<FrontendOpts<"ASTDumpDeclTypes">>;
 def ovdl_dump : Flag<["-"], "ovdl-dump">,
   HelpText<"Dump ovdl information to stdout">;
+def ovdl_dump_opt : CommaJoined<["-"], "ovdl-dump-opt=">,Flags<[CC1Option, NoDriverOption]>,
+  HelpText<"Dump ovdl information to stdout with options">;
+  //Values<"showIncludes,showEmptyOverloads,hideNotViableCand,hideCompares">,
+  //NormalizedValues<["showIncludes","showEmptyOverloads","hideNotViableCand","hideCompares"]>;
+  //MarshallingInfoEnum<DiagnosticOpts<"OvdlOpts">, "0">;
 //def ovdl_dump_line : Flag<["-"], "ovdl-dump-line=">, Group<f_Group>, Flags<[CC1Option]>,
 //  HelpText<"Dump ovdl information to stdout from line">;
 def templight_dump : Flag<["-"], "templight-dump">,
