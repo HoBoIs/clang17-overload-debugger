@@ -82,6 +82,10 @@ struct CandHash{
   };
 
 
+struct OvdlConvEntry{
+  std::string path,pathInfo,pathInfo2;
+  std::string kind;
+};
 struct OvdlCandEntry{
   std::string declLocation;
   std::string name;
@@ -91,6 +95,7 @@ struct OvdlCandEntry{
   //bool builtIn=0;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
+  std::vector<OvdlConvEntry> Conversions;
 };
 struct OvdlCompareEntry {
   OvdlCandEntry C1,C2;
@@ -144,6 +149,7 @@ public:
 } // namespace
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvdlCandEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlCompareEntry);
+LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlConvEntry);
 namespace llvm{
 namespace yaml{
 template <> struct ScalarEnumerationTraits<OverloadingResult>{
@@ -198,6 +204,17 @@ template <> struct ScalarEnumerationTraits<clang::OverloadFailureKind>{
       io.enumCase(val,"ovl_fail_module_mismatched",ovl_fail_module_mismatched);
     }
 };
+template <> struct MappingTraits<OvdlConvEntry>{
+  static void mapping(IO& io, OvdlConvEntry& fields){
+    io.mapRequired("kind",fields.kind);
+    if (fields.path!="")
+      io.mapOptional("path",fields.path);
+    if (fields.pathInfo!="")
+      io.mapOptional("pathInfo",fields.pathInfo);
+    if (fields.pathInfo2!="")
+      io.mapOptional("pathInfo",fields.pathInfo2);
+  }
+};
 template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
     io.mapRequired("Name",fields.name);
@@ -210,6 +227,9 @@ template <> struct MappingTraits<OvdlCandEntry>{
       io.mapOptional("Builtin", fields.builtIn);
     }*/
 
+    if (fields.Conversions.size()>0){
+      io.mapOptional("Conversions", fields.Conversions);
+    }
     if (fields.failKind)
       io.mapOptional("FailureKind", *fields.failKind);
     if (fields.extraFailInfo)
@@ -254,6 +274,41 @@ template <> struct MappingTraits<OvdlResEntry>{
 }//namespace llvm
 
 namespace{
+std::string toString(ImplicitConversionKind e){
+  switch(e){
+  case ICK_Identity: return "Identity";
+  case ICK_Lvalue_To_Rvalue: return "Lvalue_To_Rvalue";
+  case ICK_Array_To_Pointer: return "Array_To_Pointer";
+  case ICK_Function_To_Pointer: return "Function_To_Pointer";
+  case ICK_Function_Conversion: return "Function_Conversion";
+  case ICK_Qualification: return "Qualification";
+  case ICK_Integral_Promotion: return "Integral_Promotion";
+  case ICK_Floating_Promotion: return "Floating_Promotion";
+  case ICK_Complex_Promotion: return "Complex_Promotion";
+  case ICK_Integral_Conversion: return "Integral_Conversion";
+  case ICK_Floating_Conversion: return "Floating_Conversion";
+  case ICK_Complex_Conversion: return "Complex_Conversion";
+  case ICK_Floating_Integral: return "Floating_Integral";
+  case ICK_Pointer_Conversion: return "Pointer_Conversion";
+  case ICK_Pointer_Member: return "Pointer_Member";
+  case ICK_Boolean_Conversion: return "Boolean_Conversion";
+  case ICK_Compatible_Conversion: return "Compatible_Conversion";
+  case ICK_Derived_To_Base: return "Derived_To_Base";
+  case ICK_Vector_Conversion: return "Vector_Conversion";
+  case ICK_SVE_Vector_Conversion: return "SVE_Vector_Conversion";
+  case ICK_RVV_Vector_Conversion: return "RVV_Vector_Conversion";
+  case ICK_Vector_Splat: return "Vector_Splat";
+  case ICK_Complex_Real: return "Complex_Real";
+  case ICK_Block_Pointer_Conversion: return "Block_Pointer_Conversion";
+  case ICK_TransparentUnionConversion: return "TransparentUnionConversion";
+  case ICK_Writeback_Conversion: return "Writeback_Conversion";
+  case ICK_Zero_Event_Conversion: return "Zero_Event_Conversion";
+  case ICK_Zero_Queue_Conversion: return "Zero_Queue_Conversion";
+  case ICK_C_Only_Conversion: return "C_Only_Conversion";
+  case ICK_Incompatible_Pointer_Conversion: return "Incompatible_Pointer_Conversion";
+  case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
+  }
+}
 std::string toString(Sema::TemplateDeductionResult r){
   switch (r) {
   case Sema::TDK_Success: return "TDK_Success";
@@ -277,6 +332,26 @@ std::string toString(Sema::TemplateDeductionResult r){
   case Sema::TDK_AlreadyDiagnosed: return "TDK_AlreadyDiagnosed";
   }
 llvm_unreachable("unknown TemplateDeductionResult");
+}
+std::string toString(ImplicitConversionRank e){
+  switch(e){
+  case ICR_Exact_Match:
+    return "Exact Match";
+  case ICR_Promotion:
+    return "Promotion";
+  case ICR_Conversion:
+    return "Conversion";
+  case ICR_OCL_Scalar_Widening:
+    return "ScalarWidening";
+  case ICR_Complex_Real_Conversion:
+    return "Complex-Real";
+  case ICR_Writeback_Conversion:
+    return "Writeback";
+  case ICR_C_Conversion:
+    return "C Only";
+  case ICR_C_Conversion_Extension:
+    return "Not standard";
+  }
 }
 std::string toString(BadConversionSequence::FailureKind k){
   switch (k) {
@@ -347,7 +422,7 @@ void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
 
 class DefaultOverloadInstCallback:public OverloadCallback{
   const Sema* S=nullptr;
-  bool inBestOC=0;
+  bool inBestOC=0,isImplicit;
   const OverloadCandidateSet* Set=nullptr;
   const SourceLocation* Loc=nullptr;
   std::vector<OvdlCompareEntry> compares;
@@ -411,12 +486,14 @@ public:
         (node.line > settings.LineTo && settings.LineTo>0) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares={};
+      inBestOC=0;
       return;
     }
     node.Entry=getResEntry(res,BestOrProblem);
     node.Entry.compares=std::move(compares);
     compares={};
-    cont.add(node);
+    if (!isImplicit || settings.ShowImplicitConversions)
+      cont.add(node);
     inBestOC=0;
   }
   virtual void atCompareOverloadBegin(const Sema& TheSema,const SourceLocation& Loc,
@@ -481,6 +558,58 @@ public:
       return mp[C];
     }
     OvdlCandEntry res;
+    res.Conversions={};
+    for (const auto& conv:C.Conversions){
+      res.Conversions.push_back({});
+      auto& act=res.Conversions.back();
+      if (!conv.isInitialized()){
+        act.kind="Not initialized";
+        if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose)
+          continue;
+        else break;
+      }
+      switch (conv.getKind()) {
+      case ImplicitConversionSequence::StandardConversion:
+        act.kind="Standard";
+        act.path=conv.Standard.getFromType().getAsString();
+        act.pathInfo="";
+        if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
+          act.path+="\t->\t"+conv.Standard.getToType(0).getAsString();
+          act.path+="\t->\t"+conv.Standard.getToType(1).getAsString();
+          act.pathInfo+=toString(GetConversionRank(conv.Standard.First))+", ";
+          act.pathInfo+=toString(GetConversionRank(conv.Standard.Second))+", ";
+          act.pathInfo+=toString(GetConversionRank(conv.Standard.Third));
+          act.pathInfo2+=toString(conv.Standard.First)+", ";
+          act.pathInfo2+=toString(conv.Standard.Second)+", ";
+          act.pathInfo2+=toString(conv.Standard.Third);
+        }
+        act.path+="\t->\t"+conv.Standard.getToType(2).getAsString();
+        break;
+      case ImplicitConversionSequence::StaticObjectArgumentConversion:
+        act.kind="StaticObjectConversion";
+        break;
+      case ImplicitConversionSequence::UserDefinedConversion:
+        act.kind="UserDefined";
+        act.path=conv.UserDefined.Before.getFromType().getAsString();
+        if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
+        }
+        act.path+="\t->\t"+conv.UserDefined.After.getToType(2).getAsString();
+        break;
+      case ImplicitConversionSequence::AmbiguousConversion:
+        act.kind="Ambigious";
+        act.path=conv.Ambiguous.getFromType().getAsString();
+        act.path+="\t->\t"+conv.Ambiguous.getToType().getAsString();
+        break;
+      case ImplicitConversionSequence::EllipsisConversion:
+        act.kind="Ellipsis";
+        break;
+      case ImplicitConversionSequence::BadConversion:
+        act.kind="Bad: "+toString(conv.Bad.Kind);
+        act.path=conv.Bad.getFromType().getAsString();
+        act.path+="\t->\t"+conv.Bad.getToType().getAsString();
+        break;
+      }
+    }
     if (!C.Viable)
       res.failKind=(OverloadFailureKind)C.FailureKind;
     else
@@ -570,6 +699,7 @@ public:
     return res;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres, const OverloadCandidate* BestOrProblem){
+    isImplicit=false;
     OvdlResEntry res;
     res.ovRes=ovres;
     if (ovres==OR_Success) {
@@ -595,6 +725,7 @@ public:
       Args={};
     }
     if (Args.size()==1 && isa< clang::InitListExpr>(Args[0])){
+      if (Args[0]->getEndLoc()>endloc02) {endloc02=Args[0]->getEndLoc();}
       const clang::InitListExpr* p=llvm::dyn_cast<const clang::InitListExpr>(Args[0]);
       Args=p->inits();
     }
@@ -613,15 +744,22 @@ public:
       if (endloc<endloc2) endloc=endloc2;
     }
     range=CharSourceRange::getCharRange(begloc,endloc);
+    if (Args.size()==1 && Args[0]->getBeginLoc()==begloc){
+      SourceLocation endloc2(Lexer::getLocForEndOfToken(Args[0]->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+      if (endloc==endloc2)
+        isImplicit=true;
+    }
     res.callSignature=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
     if (Set->getObjectParamType()!=QualType()) {
       res.callTypes.push_back("(Obj:"+Set->getObjectParamType().getAsString()+")");
     }
     for (const auto& x:Args){
       if (x==0) {res.callTypes.push_back("NULL"); continue;}
-      if (isa<CXXBoolLiteralExpr,CXXNullPtrLiteralExpr,CharacterLiteral,CompoundLiteralExpr
-          ,FixedPointLiteral,FloatingLiteral,ImaginaryLiteral,IntegerLiteral,ObjCArrayLiteral
-          ,ObjCBoolLiteralExpr,ObjCDictionaryLiteral,ObjCStringLiteral,StringLiteral>(x))
+      if (isa<CXXBoolLiteralExpr, CXXNullPtrLiteralExpr, CharacterLiteral,
+          CompoundLiteralExpr, FixedPointLiteral, FloatingLiteral,
+          ImaginaryLiteral, IntegerLiteral, ObjCArrayLiteral,
+          ObjCBoolLiteralExpr, ObjCDictionaryLiteral, ObjCStringLiteral,
+          StringLiteral>(x))
         res.callTypes.push_back(x->getType().getAsString()+" literal");
       else
         res.callTypes.push_back(x->getType().getAsString());

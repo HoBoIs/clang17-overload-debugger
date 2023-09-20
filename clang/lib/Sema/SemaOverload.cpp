@@ -24,6 +24,7 @@
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/OperatorKinds.h"
 #include "clang/Basic/PartialDiagnostic.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
@@ -14039,9 +14040,10 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
     return CreateBuiltinBinOp(OpLoc, Opc, Args[0], Args[1]);
 
   // Build the overload set.
-  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,Args,Args[1]->getSourceRange().getEnd(),
-                                    OverloadCandidateSet::OperatorRewriteInfo(
-                                        Op, OpLoc, AllowRewrittenCandidates));//???
+  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,
+                          Args,Args[1]->getSourceRange().getEnd(),
+                          OverloadCandidateSet::OperatorRewriteInfo(
+                            Op, OpLoc, AllowRewrittenCandidates));//???
   if (DefaultedFn)
     CandidateSet.exclude(DefaultedFn);
   LookupOverloadedBinOp(CandidateSet, Op, Fns, Args, PerformADL);

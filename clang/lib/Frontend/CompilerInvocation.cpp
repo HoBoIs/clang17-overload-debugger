@@ -2539,8 +2539,9 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
   }
 
   if (Opts.ProgramAction == frontend::OvdlDump) {
-    llvm::errs()<<"$"<<Opts.OvdlSettings.LineTo<<" ";
+    llvm::errs()<<Opts.OvdlSettings.ConversionPrint<<"|";
     GenerateProgramAction = [&]() {
+      const std::string ConversionKinds[]={"NoConversionPrint","DenseConversionPrint","VerboseConversionPrint"};
       
       GenerateArg(Args, OPT_ovdl_dump_opt, 
           std::to_string(Opts.OvdlSettings.LineFrom)+"-"+
@@ -2548,7 +2549,9 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
           std::string(Opts.OvdlSettings.ShowEmptyOverloads?",ShowEmptyOverloads":",HideEmptyOverloads")+
           std::string(Opts.OvdlSettings.ShowCompares?",ShowCompares":",HideCompares")+
           std::string(Opts.OvdlSettings.ShowIncludes?",ShowIncludes":",HideIncludes")+
-          std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands"), 
+          std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands")+ 
+          std::string(Opts.OvdlSettings.ShowImplicitConversions?",ShowImplicitConversions":",HideImplicitConversions")+","+
+          ConversionKinds[Opts.OvdlSettings.ConversionPrint], 
           SA);
     };
 
@@ -2758,6 +2761,16 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvdlSettings.ShowEmptyOverloads=1;
         } else if (s=="HideEmptyOverloads"){
           Opts.OvdlSettings.ShowEmptyOverloads=0;
+        } else if (s=="ShowImplicitConversions"){
+          Opts.OvdlSettings.ShowImplicitConversions=1;
+        } else if (s=="HideImplicitConversions"){
+          Opts.OvdlSettings.ShowImplicitConversions=0;
+        } else if (s=="NoConversionPrint") {
+          Opts.OvdlSettings.ConversionPrint=clang::FrontendOptions::CPK_No;
+        } else if (s=="DenseConversionPrint") {
+          Opts.OvdlSettings.ConversionPrint=clang::FrontendOptions::CPK_Dense;
+        } else if (s=="VerboseConversionPrint") {
+          Opts.OvdlSettings.ConversionPrint=clang::FrontendOptions::CPK_Verbose;
         } else {
           unsigned lF=0,lT=0;
           unsigned actual=0;

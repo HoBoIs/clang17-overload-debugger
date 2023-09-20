@@ -515,13 +515,19 @@ public:
 
   /// Path which stores the output files for -ftime-trace
   std::string TimeTracePath;
-
+  enum ConversionPrintKind{
+    CPK_No=0,
+    CPK_Dense=1,
+    CPK_Verbose=2,
+  };
   struct OvdlSettingsC{
     unsigned LineFrom,LineTo;
     unsigned ShowNonViableCands:1;
     unsigned ShowIncludes:1;
     unsigned ShowCompares:1;
     unsigned ShowEmptyOverloads:1;
+    unsigned ShowImplicitConversions:1;
+    unsigned ConversionPrint:2;//Actually a ConversionPrintKind
   }OvdlSettings;
 
 
@@ -537,7 +543,7 @@ public:
         BuildingImplicitModuleUsesLock(true), ModulesEmbedAllFiles(false),
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
-        TimeTraceGranularity(500),OvdlSettings({0,0,1,0,1,0}) {}
+        TimeTraceGranularity(500),OvdlSettings({0,0,1,0,1,0,0,1}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.
