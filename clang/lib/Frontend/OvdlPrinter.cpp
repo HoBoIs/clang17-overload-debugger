@@ -83,7 +83,7 @@ struct CandHash{
 
 
 struct OvdlConvEntry{
-  std::string path,pathInfo,pathInfo2;
+  std::string path,pathInfo;
   std::string kind;
 };
 struct OvdlCandEntry{
@@ -211,8 +211,6 @@ template <> struct MappingTraits<OvdlConvEntry>{
       io.mapOptional("path",fields.path);
     if (fields.pathInfo!="")
       io.mapOptional("pathInfo",fields.pathInfo);
-    if (fields.pathInfo2!="")
-      io.mapOptional("pathInfo",fields.pathInfo2);
   }
 };
 template <> struct MappingTraits<OvdlCandEntry>{
@@ -309,6 +307,60 @@ std::string toString(ImplicitConversionKind e){
   case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
   }
 }
+std::string getConversionSeq(const StandardConversionSequence& cs){
+  std::string res;
+  bool PrintedSomething = false;
+  if (cs.First != ICK_Identity) {
+    res+= toString(cs.First);
+    PrintedSomething = true;
+  }
+
+  if (cs.Second != ICK_Identity) {
+    if (PrintedSomething) {
+      res+= " -> ";
+    }
+    res+= toString(cs.Second);
+
+    if (cs.CopyConstructor) {
+      res+= " (by copy constructor)";
+    } else if (cs.DirectBinding) {
+      res+= " (direct reference binding)";
+    } else if (cs.ReferenceBinding) {
+      res+= " (reference binding)";
+    }
+    PrintedSomething = true;
+  }
+
+  if (cs.Third != ICK_Identity) {
+    if (PrintedSomething) {
+      res+= " -> ";
+    }
+    res+= toString(cs.Third);
+    PrintedSomething = true;
+  }
+
+  if (!PrintedSomething) {
+    res+= "No conversions required";
+  }
+  return res;
+}
+std::string getConversionSeq(const UserDefinedConversionSequence& cs){
+  std::string res;
+  if (cs.Before.First || cs.Before.Second || cs.Before.Third) {
+    res+=getConversionSeq(cs.Before);
+    res+= " -> ";
+  }
+  if (cs.ConversionFunction){
+    //res+= cs.ConversionFunction->getNameAsString();
+    res+= cs.ConversionFunction->getQualifiedNameAsString();
+  }else
+    res+= "aggregate initialization";
+  if (cs.After.First || cs.After.Second || cs.After.Third) {
+    res+= " -> ";
+    res+=getConversionSeq(cs.After);
+  }
+  return res;
+}
 std::string toString(Sema::TemplateDeductionResult r){
   switch (r) {
   case Sema::TDK_Success: return "TDK_Success";
@@ -352,6 +404,7 @@ std::string toString(ImplicitConversionRank e){
   case ICR_C_Conversion_Extension:
     return "Not standard";
   }
+llvm_unreachable("unknown enum");
 }
 std::string toString(BadConversionSequence::FailureKind k){
   switch (k) {
@@ -559,31 +612,35 @@ public:
     }
     OvdlCandEntry res;
     res.Conversions={};
-    for (const auto& conv:C.Conversions){
+    //for (const auto& conv:C.Conversions){
+    for (size_t i=0; i<C.Conversions.size();++i){
+      const auto& conv=C.Conversions[i];
+      int idx=i;
+      if (C.Function && isa<CXXMethodDecl>(C.Function) && ! isa<CXXConstructorDecl>(C.Function))
+        --idx;
       res.Conversions.push_back({});
       auto& act=res.Conversions.back();
       if (!conv.isInitialized()){
         act.kind="Not initialized";
-        if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose)
-          continue;
-        else break;
+        //if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose)
+        continue;
+        //else break;
       }
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
         act.kind="Standard";
         act.path=conv.Standard.getFromType().getAsString();
-        act.pathInfo="";
+        act.pathInfo=getConversionSeq(conv.Standard);
+        conv.Standard.dump();
         if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
-          act.path+="\t->\t"+conv.Standard.getToType(0).getAsString();
-          act.path+="\t->\t"+conv.Standard.getToType(1).getAsString();
-          act.pathInfo+=toString(GetConversionRank(conv.Standard.First))+", ";
-          act.pathInfo+=toString(GetConversionRank(conv.Standard.Second))+", ";
-          act.pathInfo+=toString(GetConversionRank(conv.Standard.Third));
-          act.pathInfo2+=toString(conv.Standard.First)+", ";
-          act.pathInfo2+=toString(conv.Standard.Second)+", ";
-          act.pathInfo2+=toString(conv.Standard.Third);
+          act.path+=" -> "+conv.Standard.getToType(0).getAsString();
+          act.path+=" -> "+conv.Standard.getToType(1).getAsString();
         }
-        act.path+="\t->\t"+conv.Standard.getToType(2).getAsString();
+        act.path+=" -> "+conv.Standard.getToType(2).getAsString();
+        if (idx==-1);
+        else if (C.Function && C.Function->parameters().size()>idx){
+          act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
+        }
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         act.kind="StaticObjectConversion";
@@ -591,14 +648,27 @@ public:
       case ImplicitConversionSequence::UserDefinedConversion:
         act.kind="UserDefined";
         act.path=conv.UserDefined.Before.getFromType().getAsString();
-        if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
-        }
-        act.path+="\t->\t"+conv.UserDefined.After.getToType(2).getAsString();
+        if (conv.UserDefined.Before.First || 
+            conv.UserDefined.Before.Second || 
+            conv.UserDefined.Before.Third) 
+          act.path+=" -> "+conv.UserDefined.Before.getToType(2).getAsString();
+        act.pathInfo=getConversionSeq(conv.UserDefined);
+        /*if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
+        }*/
+        if (conv.UserDefined.After.First || 
+            conv.UserDefined.After.Second || 
+            conv.UserDefined.After.Third) 
+          act.path+=" -> "+conv.UserDefined.After.getFromType().getAsString();
+        //act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
+        act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
+        if (idx==-1);
+        else if (C.Function && C.Function->parameters().size()>idx)
+          act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
         act.kind="Ambigious";
         act.path=conv.Ambiguous.getFromType().getAsString();
-        act.path+="\t->\t"+conv.Ambiguous.getToType().getAsString();
+        act.path+=" -> "+conv.Ambiguous.getToType().getAsString();
         break;
       case ImplicitConversionSequence::EllipsisConversion:
         act.kind="Ellipsis";
@@ -606,7 +676,7 @@ public:
       case ImplicitConversionSequence::BadConversion:
         act.kind="Bad: "+toString(conv.Bad.Kind);
         act.path=conv.Bad.getFromType().getAsString();
-        act.path+="\t->\t"+conv.Bad.getToType().getAsString();
+        act.path+=" -> "+conv.Bad.getToType().getAsString();
         break;
       }
     }
@@ -686,7 +756,6 @@ public:
   std::string getSignature(const OverloadCandidate& C) const{
     //const FunctionDecl* f=C.Function;
     std::string res;
-    C.Function->isCXXInstanceMember();
     if (!C.Function->param_empty()){
       res+=C.Function->parameters()[0]->getType().getAsString();
       if (C.Function->parameters()[0]->hasDefaultArg()) res+="=def";
