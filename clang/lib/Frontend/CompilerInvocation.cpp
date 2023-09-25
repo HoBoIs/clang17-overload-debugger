@@ -2539,7 +2539,6 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
   }
 
   if (Opts.ProgramAction == frontend::OvdlDump) {
-    llvm::errs()<<Opts.OvdlSettings.ConversionPrint<<"|";
     GenerateProgramAction = [&]() {
       const std::string ConversionKinds[]={"NoConversionPrint","DenseConversionPrint","VerboseConversionPrint"};
       
@@ -2551,6 +2550,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
           std::string(Opts.OvdlSettings.ShowIncludes?",ShowIncludes":",HideIncludes")+
           std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands")+ 
           std::string(Opts.OvdlSettings.ShowImplicitConversions?",ShowImplicitConversions":",HideImplicitConversions")+","+
+          std::string(Opts.OvdlSettings.ShowBuiltInNonViable?",ShowBuiltInNonViable":",HideBuiltInNonViable")+","+
           ConversionKinds[Opts.OvdlSettings.ConversionPrint], 
           SA);
     };
@@ -2734,16 +2734,12 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     if (ProgramAction == frontend::FixIt && Opt == OPT_fixit_EQ)
       Opts.FixItSuffix = A->getValue();
     if (ProgramAction == frontend::OvdlDump){
-      llvm::errs()<<" '"<<'j'<<"' ";
       if (Opt== OPT_ovdl_dump){
-        llvm::errs()<<" 2 ";
       }
     }
     if (ProgramAction == frontend::OvdlDump && Opt == OPT_ovdl_dump_opt){
       const auto& x=A->getValues();
-      llvm::errs()<<A->getNumValues()<<"=AV";
       for (const auto& y:x){
-        llvm::errs()<<" '"<<y<<"' ";
         const std::string s=y;
         if (s=="ShowNonViableCands"){
           Opts.OvdlSettings.ShowNonViableCands=1;
@@ -2761,6 +2757,10 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvdlSettings.ShowEmptyOverloads=1;
         } else if (s=="HideEmptyOverloads"){
           Opts.OvdlSettings.ShowEmptyOverloads=0;
+        } else if (s=="ShowBuiltInNonViable"){
+          Opts.OvdlSettings.ShowBuiltInNonViable=1;
+        } else if (s=="HideBuiltInNonViable"){
+          Opts.OvdlSettings.ShowBuiltInNonViable=0;
         } else if (s=="ShowImplicitConversions"){
           Opts.OvdlSettings.ShowImplicitConversions=1;
         } else if (s=="HideImplicitConversions"){
@@ -2797,7 +2797,6 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
             lT=actual;
             Opts.OvdlSettings.LineFrom=lF;
             Opts.OvdlSettings.LineTo=lT;
-            llvm::errs()<<lF<<" "<<lT<<" ";
           }else{
             llvm::errs()<<"unkonwn param: "<<s<<'\n';
           }
@@ -4591,16 +4590,13 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Invocation,
                                         const char *Argv0) {
   CompilerInvocation DummyInvocation;
 
-  llvm::errs()<<"A";
   return RoundTrip(
       [](CompilerInvocation &Invocation, ArrayRef<const char *> CommandLineArgs,
          DiagnosticsEngine &Diags, const char *Argv0) {
-  llvm::errs()<<"Y";
         return CreateFromArgsImpl(Invocation, CommandLineArgs, Diags, Argv0);
       },
       [](CompilerInvocation &Invocation, SmallVectorImpl<const char *> &Args,
          StringAllocator SA) {
-  llvm::errs()<<"X";
         Args.push_back("-cc1");
         Invocation.generateCC1CommandLine(Args, SA);
       },

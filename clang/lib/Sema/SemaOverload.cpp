@@ -9955,6 +9955,7 @@ bool clang::isBetterOverloadCandidate(
   //      that ICS1(F) is neither better nor worse than ICS1(G) for
   //      any function G, and, symmetrically, ICS1(G) is neither
   //      better nor worse than ICS1(F).
+  int infoIdx=-2;
   unsigned StartArg = 0;
   if (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument)
     StartArg = 1;
@@ -9982,15 +9983,17 @@ bool clang::isBetterOverloadCandidate(
     bool Cand2Bad = IsIllFormedConversion(Cand2.Conversions[ArgIdx]);
     if (Cand1Bad != Cand2Bad) {
       if (Cand1Bad){
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterConversion);
+    	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+            Cand1,Cand2,false,badConversion,ArgIdx);
         return false;
       }
+      infoIdx=ArgIdx;
       HasBetterConversion = true;
     }
   }
 
   if (HasBetterConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterConversion);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,badConversion,infoIdx);
     return true;
   }
 
@@ -10000,12 +10003,15 @@ bool clang::isBetterOverloadCandidate(
   //   conversion sequence than ICSi(F2), and then...
   bool HasWorseConversion = false;
   for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx) {
+    if (/*isLoging*/ !S.OverloadCallbacks.empty()){
+    }
     switch (CompareImplicitConversionSequences(S, Loc,
                                                Cand1.Conversions[ArgIdx],
                                                Cand2.Conversions[ArgIdx])) {
     case ImplicitConversionSequence::Better:
       // Cand1 has a better conversion sequence.
       HasBetterConversion = true;
+      infoIdx=ArgIdx;
       break;
 
     case ImplicitConversionSequence::Worse:
@@ -10030,7 +10036,7 @@ bool clang::isBetterOverloadCandidate(
       }
 
       // Cand1 can't be better than Cand2.
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterConversion);
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterConversion,ArgIdx);
       return false;
 
     case ImplicitConversionSequence::Indistinguishable:
@@ -10042,7 +10048,7 @@ bool clang::isBetterOverloadCandidate(
   //    -- for some argument j, ICSj(F1) is a better conversion sequence than
   //       ICSj(F2), or, if not that,
   if (HasBetterConversion && !HasWorseConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterConversion);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterConversion,infoIdx);
     return true;
   }
 
@@ -10066,16 +10072,20 @@ bool clang::isBetterOverloadCandidate(
       Result = CompareStandardConversionSequences(S, Loc,
                                                   Cand1.FinalConversion,
                                                   Cand2.FinalConversion);
-    if (Result == ImplicitConversionSequence::Worse){
+    /*if (Result == ImplicitConversionSequence::Worse){
       atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterImplicitConversion);
 
       return false;
     }else if (Result == ImplicitConversionSequence::Better){
       atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterImplicitConversion);
       return true;
+    }*/
+    if (Result != ImplicitConversionSequence::Indistinguishable){
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+          Cand1,Cand2,Result == ImplicitConversionSequence::Better,
+          betterImplicitConversion);
+      return Result == ImplicitConversionSequence::Better;
     }
-    //if (Result != ImplicitConversionSequence::Indistinguishable)
-    //  return Result == ImplicitConversionSequence::Better;
 
     // FIXME: Compare kind of reference binding if conversion functions
     // convert to a reference type used in direct reference binding, per
@@ -10092,13 +10102,9 @@ bool clang::isBetterOverloadCandidate(
       Cand1.Function && Cand2.Function){
       if (isa<CXXConstructorDecl>(Cand1.Function) !=
           isa<CXXConstructorDecl>(Cand2.Function)){
-        if (isa<CXXConstructorDecl>(Cand1.Function)){
-      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,constructor);
-          return true;
-        }else{
-      	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,constructor);
-          return false;
-        }
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
+            isa<CXXConstructorDecl>(Cand1.Function),constructor);
+        return isa<CXXConstructorDecl>(Cand1.Function);
       }
   }
 
@@ -10109,13 +10115,8 @@ bool clang::isBetterOverloadCandidate(
   bool Cand2IsSpecialization = Cand2.Function &&
                                Cand2.Function->getPrimaryTemplate();
   if (Cand1IsSpecialization != Cand2IsSpecialization){
-    if (Cand2IsSpecialization){
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,isSpecialization);
-        return true;
-    }else{
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,isSpecialization);
-        return false;
-    }
+      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand2IsSpecialization,isSpecialization);
+      return Cand2IsSpecialization;
   }
 
   //   -- F1 and F2 are function template specializations, and the function
@@ -10130,13 +10131,9 @@ bool clang::isBetterOverloadCandidate(
                                                    : TPOC_Call,
             Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
             Cand1.isReversed() ^ Cand2.isReversed())){
-      if (BetterTemplate == Cand1.Function->getPrimaryTemplate()){
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,moreSpecialized);
-        return true;
-      }else{
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,moreSpecialized);
-        return false;
-      }
+     	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
+          Cand2IsSpecialization,moreSpecialized);
+      return Cand2IsSpecialization;
     }
 
   }
@@ -10227,7 +10224,7 @@ bool clang::isBetterOverloadCandidate(
         return true;
       }
       if (Guide2->getDeductionCandidateKind() == DeductionCandidate::Copy){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,guideTemplated);
+        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,guideCopy);
         return false;
       }
 

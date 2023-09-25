@@ -6,7 +6,7 @@
 namespace clang{
 
 enum BetterOverloadCandidateReason{
-  viability,CUDAEmit,betterConversion,betterImplicitConversion,
+  viability,CUDAEmit,badConversion,betterConversion,betterImplicitConversion,
   constructor,isSpecialization,moreSpecialized,isInherited,
   derivedFromOther,RewriteKind,guideImplicit,guideCopy,guideTemplated,enableIf,
   parameterObjectSize,multiversion,CUDApreference,addressSpace,inconclusive
@@ -23,7 +23,7 @@ public:
   virtual void atCompareOverloadBegin(const Sema& TheSema,const SourceLocation& Loc,
     const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)=0;
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
-    const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason)=0;
+    const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason,int infoIdx)=0;
 }; 
 template <class OverloadCallbackPtrs>
 void atOverloadBegin(OverloadCallbackPtrs &Callbacks,
@@ -60,10 +60,10 @@ void atCompareOverloadBegin(OverloadCallbackPtrs &Callbacks, const Sema& TheSema
 template <class OverloadCallbackPtrs>
 void atCompareOverloadEnd(OverloadCallbackPtrs &Callbacks, const Sema& TheSema,const SourceLocation& Loc,
                         const OverloadCandidate &Cand1, const OverloadCandidate &Cand2,
-                        bool res,BetterOverloadCandidateReason reason){
+                        bool res,BetterOverloadCandidateReason reason,int infoIdx=-1){
   for (auto &C : Callbacks) {
     if (C)
-      C->atCompareOverloadEnd(TheSema, Loc, Cand1,Cand2,res,reason);
+      C->atCompareOverloadEnd(TheSema, Loc, Cand1,Cand2,res,reason,infoIdx);
   }
 }
 

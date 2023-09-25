@@ -97,12 +97,15 @@ struct OvdlCandEntry{
   std::optional<std::string> extraFailInfo;
   std::vector<OvdlConvEntry> Conversions;
 };
+/*struct OvdlParamCompareEntry{
+  std::string c1from,c2from;
+  std::string res;
+};*/
 struct OvdlCompareEntry {
   OvdlCandEntry C1,C2;
   std::string reason;
   bool C1Better;
-  // enum Better{C1,C2,undefined}; ???
-  // Better better;
+  std::optional<std::string> deciderConversion;
 };
 
 struct OvdlResEntry{
@@ -164,6 +167,7 @@ template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
   static void enumeration(IO& io, BetterOverloadCandidateReason& val){
       io.enumCase(val,"viability",viability);
       io.enumCase(val,"CUDAEmit",CUDAEmit);
+      io.enumCase(val,"badConversion",badConversion);
       io.enumCase(val,"betterConversion",betterConversion);
       io.enumCase(val,"betterImplicitConversion",betterImplicitConversion);
       io.enumCase(val,"constructor",constructor);
@@ -246,6 +250,8 @@ template <> struct MappingTraits<OvdlCompareEntry>{
     io.mapRequired("C2",fields.C2);
     io.mapRequired("C1Better",fields.C1Better);
     io.mapRequired("reason",fields.reason);
+    if (fields.deciderConversion)
+      io.mapOptional("Decider", *fields.deciderConversion);
   }
 };
 template <> struct MappingTraits<OvdlResEntry>{
@@ -424,6 +430,8 @@ std::string toString(BetterOverloadCandidateReason r){
     return "viability";
   case CUDAEmit:
     return "CUDAEmit";
+  case badConversion:
+    return "badConversion";
   case betterConversion:
     return "betterConversion";
   case betterImplicitConversion:
@@ -461,6 +469,43 @@ std::string toString(BetterOverloadCandidateReason r){
   };
   return "";//UNREACHABLE
 };
+const QualType getFromType(const ImplicitConversionSequence& C){
+  if (! C.isInitialized()) return {};
+  switch (C.getKind()) {
+  case ImplicitConversionSequence::StandardConversion:
+    return C.Standard.getFromType();
+  case ImplicitConversionSequence::StaticObjectArgumentConversion:
+    return {};
+  case ImplicitConversionSequence::UserDefinedConversion:
+    return C.UserDefined.Before.getFromType();
+  case ImplicitConversionSequence::AmbiguousConversion:
+    return C.Ambiguous.getFromType();
+  case ImplicitConversionSequence::EllipsisConversion:
+    return {};
+  case ImplicitConversionSequence::BadConversion:
+    return C.Bad.getFromType();
+  }
+  llvm_unreachable("Unknown ImplicitConversionSequence kind");
+}
+
+const QualType getToType(const ImplicitConversionSequence& C){
+  if (! C.isInitialized()) return {};
+  switch (C.getKind()) {
+  case ImplicitConversionSequence::StandardConversion:
+    return C.Standard.getToType(2);
+  case ImplicitConversionSequence::StaticObjectArgumentConversion:
+    return {};
+  case ImplicitConversionSequence::UserDefinedConversion:
+    return C.UserDefined.After.getToType(2);
+  case ImplicitConversionSequence::AmbiguousConversion:
+    return C.Ambiguous.getToType();
+  case ImplicitConversionSequence::EllipsisConversion:
+    return {};
+  case ImplicitConversionSequence::BadConversion:
+    return C.Bad.getToType();
+  }
+  llvm_unreachable("Unknown ImplicitConversionSequence kind");
+}
 void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
   std::string YAML;
   {
@@ -483,42 +528,12 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   clang::FrontendOptions::OvdlSettingsC settings;
   //CompilerInstance& ci=CompilerInstance();
 public:
-  void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){settings=s; llvm::errs()<<s.LineTo<<"\n";};
+  void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){settings=s;};
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
   virtual void atEnd() override{
     for (auto& x:cont)
       displayOvdlResEntry(llvm::outs(),x.Entry);
-    /*std::string message;
-    bool exiting=0;
-    std::string commangs="exit/q; Fname/FN string; showEmpty/sE bool; lineFrom/lF uint; lineTo/lT uint; showCompares/sC bool; showNonViable/sNV bool; list/l\n";
-    do {
-      llvm::outs()<<"What filter do you want to do? (help to show commands)\n";
-      std::cin>>message;
-      if (message=="exit"||message=="q"){
-        exiting=1;
-      }else if (message=="Fname"|| message=="FN"){
-        std::cin>>cont.filterSettings.Fname;
-      }else if (message=="showEmpty"||message=="sE"){
-        std::cin>>cont.filterSettings.printEmpty;
-      } else if (message=="lineFrom"||message=="lF"){
-        std::cin>>cont.filterSettings.lineFrom;
-      } else if (message=="lineTo"||message=="lT"){
-        std::cin>>cont.filterSettings.lineTo;
-      } else if (message=="showCompares"||message=="sC"){
-        std::cin>>OvdlResEntry::showCompares;
-      } else if (message=="showNonViable"||message=="sNV"){
-        std::cin>>OvdlResEntry::showNonViable;
-      }else if (message=="list"||message=="l"){
-        for (auto& x:cont.filter()){
-          displayOvdlResEntry(llvm::outs(),x.Entry);
-        }
-      }else if (message=="help"){
-        llvm::outs()<<commangs;
-      }else{
-        llvm::outs()<<"invalid\n";
-      }
-    }while (!exiting);*/
   }
   virtual void atOverloadBegin(const Sema&s,const SourceLocation& loc,const OverloadCandidateSet& set) override{
     S=&s;
@@ -553,7 +568,7 @@ public:
         const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)override{
   }
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
-        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason) override {
+        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason,int infoIdx) override {
     if (!inBestOC || !settings.ShowCompares) {return;}
     PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
     if (!L.isValid()){
@@ -568,6 +583,22 @@ public:
     Entry.C1=getCandEntry(Cand1);
     Entry.C2=getCandEntry(Cand2);
     Entry.reason=toString(reason);
+    if (reason==clang::betterConversion){
+      std::string message=
+        getFromType(Cand1.Conversions[infoIdx]).getAsString()+" ->    "+
+        getToType(Cand1.Conversions[infoIdx]).getAsString()+
+        (res?" > ":" < ")+
+        getToType(Cand2.Conversions[infoIdx]).getAsString();
+      
+      message+="    Place: "+std::to_string(infoIdx+1);
+
+      Entry.deciderConversion=message;
+    }else if (reason==clang::badConversion){
+      std::string message=
+        getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
+        getToType((res?Cand1:Cand2).Conversions[infoIdx]).getAsString();
+      Entry.deciderConversion=message+"is ill formated";
+    }
     compares.push_back(Entry);
   }
   std::optional<std::string> getExtraFailInfo(const OverloadCandidate& C){
@@ -632,10 +663,10 @@ public:
         act.path=conv.Standard.getFromType().getAsString();
         act.pathInfo=getConversionSeq(conv.Standard);
         conv.Standard.dump();
-        if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
+        /*if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
           act.path+=" -> "+conv.Standard.getToType(0).getAsString();
           act.path+=" -> "+conv.Standard.getToType(1).getAsString();
-        }
+        }*/
         act.path+=" -> "+conv.Standard.getToType(2).getAsString();
         if (idx==-1);
         else if (C.Function && C.Function->parameters().size()>idx){
@@ -838,8 +869,11 @@ public:
     for (const auto& cand:*Set){
       if (cand.Viable)
         res.viableCandidates.push_back(getCandEntry(cand));
-      else if (settings.ShowNonViableCands)
-        res.nonViableCandidates.push_back(getCandEntry(cand));
+      else if (settings.ShowNonViableCands){
+        const auto x=getCandEntry(cand);
+        if (x.declLocation!="Built-in" || settings.ShowBuiltInNonViable)
+          res.nonViableCandidates.push_back(x);
+      }
     }
     return res;
   }
@@ -854,7 +888,6 @@ void OvdlDumpAction::ExecuteAction(){
   CompilerInstance &CI = getCompilerInstance();
   EnsureSemaIsCreated(CI, *this);
   auto x=std::make_unique<DefaultOverloadInstCallback>();
-  llvm::errs()<<"X"<<CI.getFrontendOpts().OvdlSettings.LineFrom<<"X\n";
   x->setSettings(CI.getFrontendOpts().OvdlSettings);
   CI.getSema().OverloadCallbacks.push_back(std::move(x));
   ASTFrontendAction::ExecuteAction();

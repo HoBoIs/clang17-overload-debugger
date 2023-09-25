@@ -528,6 +528,7 @@ public:
     unsigned ShowEmptyOverloads:1;
     unsigned ShowImplicitConversions:1;
     unsigned ConversionPrint:2;//Actually a ConversionPrintKind
+    unsigned ShowBuiltInNonViable:1;
   }OvdlSettings;
 
 
@@ -543,7 +544,7 @@ public:
         BuildingImplicitModuleUsesLock(true), ModulesEmbedAllFiles(false),
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
-        TimeTraceGranularity(500),OvdlSettings({0,0,1,0,1,0,0,1}) {}
+        TimeTraceGranularity(500),OvdlSettings({0,0,1,0,1,0,0,1,0}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.
