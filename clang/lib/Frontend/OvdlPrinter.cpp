@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 using namespace clang;
 
@@ -312,6 +313,7 @@ std::string toString(ImplicitConversionKind e){
   case ICK_Incompatible_Pointer_Conversion: return "Incompatible_Pointer_Conversion";
   case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
   }
+  llvm_unreachable("Unknown ImplicitConversionKind");
 }
 std::string getConversionSeq(const StandardConversionSequence& cs){
   std::string res;
@@ -584,20 +586,19 @@ public:
     Entry.C2=getCandEntry(Cand2);
     Entry.reason=toString(reason);
     if (reason==clang::betterConversion){
-      std::string message=
-        getFromType(Cand1.Conversions[infoIdx]).getAsString()+" ->    "+
+      std::string message="("+
+        getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
         getToType(Cand1.Conversions[infoIdx]).getAsString()+
-        (res?" > ":" < ")+
-        getToType(Cand2.Conversions[infoIdx]).getAsString();
-      
+        (res?")  >  (":")  <  (")+
+        getFromType(Cand2.Conversions[infoIdx]).getAsString()+" -> "+
+        getToType(Cand2.Conversions[infoIdx]).getAsString()+")";
       message+="    Place: "+std::to_string(infoIdx+1);
-
       Entry.deciderConversion=message;
     }else if (reason==clang::badConversion){
       std::string message=
         getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
         getToType((res?Cand1:Cand2).Conversions[infoIdx]).getAsString();
-      Entry.deciderConversion=message+"is ill formated";
+      Entry.deciderConversion=message+" is ill formated";
     }
     compares.push_back(Entry);
   }
@@ -636,42 +637,27 @@ public:
     }
     return {};
   }
-  OvdlCandEntry getCandEntry(const OverloadCandidate& C){
-    static std::unordered_map<OverloadCandidate, OvdlCandEntry,CandHash,CandEq> mp;
-    if (mp.find(C)!=mp.end()){
-      return mp[C];
-    }
-    OvdlCandEntry res;
-    res.Conversions={};
-    //for (const auto& conv:C.Conversions){
+  std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C){
+    std::vector<OvdlConvEntry> res;
     for (size_t i=0; i<C.Conversions.size();++i){
       const auto& conv=C.Conversions[i];
       int idx=i;
       if (C.Function && isa<CXXMethodDecl>(C.Function) && ! isa<CXXConstructorDecl>(C.Function))
         --idx;
-      res.Conversions.push_back({});
-      auto& act=res.Conversions.back();
+      res.push_back({});
+      auto& act=res.back();
       if (!conv.isInitialized()){
         act.kind="Not initialized";
-        //if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose)
         continue;
-        //else break;
       }
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
         act.kind="Standard";
         act.path=conv.Standard.getFromType().getAsString();
         act.pathInfo=getConversionSeq(conv.Standard);
-        conv.Standard.dump();
-        /*if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
-          act.path+=" -> "+conv.Standard.getToType(0).getAsString();
-          act.path+=" -> "+conv.Standard.getToType(1).getAsString();
-        }*/
         act.path+=" -> "+conv.Standard.getToType(2).getAsString();
-        if (idx==-1);
-        else if (C.Function && C.Function->parameters().size()>idx){
+        if (C.Function && idx!=-1)
           act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
-        }
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         act.kind="StaticObjectConversion";
@@ -684,16 +670,13 @@ public:
             conv.UserDefined.Before.Third) 
           act.path+=" -> "+conv.UserDefined.Before.getToType(2).getAsString();
         act.pathInfo=getConversionSeq(conv.UserDefined);
-        /*if (settings.ConversionPrint==clang::FrontendOptions::CPK_Verbose){
-        }*/
         if (conv.UserDefined.After.First || 
             conv.UserDefined.After.Second || 
             conv.UserDefined.After.Third) 
           act.path+=" -> "+conv.UserDefined.After.getFromType().getAsString();
         //act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
         act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
-        if (idx==-1);
-        else if (C.Function && C.Function->parameters().size()>idx)
+        if (C.Function && idx!=-1)
           act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
@@ -711,6 +694,19 @@ public:
         break;
       }
     }
+
+    return res;
+  }
+  OvdlCandEntry getCandEntry(const OverloadCandidate& C){
+    static std::unordered_map<OverloadCandidate, OvdlCandEntry,CandHash,CandEq> mp;
+    if (mp.find(C)!=mp.end()){
+      return mp[C];
+    }
+    OvdlCandEntry res;
+    if (settings.ShowConversions)
+      res.Conversions=getConversions(C);
+    else
+      res.Conversions={};
     if (!C.Viable)
       res.failKind=(OverloadFailureKind)C.FailureKind;
     else

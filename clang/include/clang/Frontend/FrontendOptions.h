@@ -515,11 +515,6 @@ public:
 
   /// Path which stores the output files for -ftime-trace
   std::string TimeTracePath;
-  enum ConversionPrintKind{
-    CPK_No=0,
-    CPK_Dense=1,
-    CPK_Verbose=2,
-  };
   struct OvdlSettingsC{
     unsigned LineFrom,LineTo;
     unsigned ShowNonViableCands:1;
@@ -527,7 +522,7 @@ public:
     unsigned ShowCompares:1;
     unsigned ShowEmptyOverloads:1;
     unsigned ShowImplicitConversions:1;
-    unsigned ConversionPrint:2;//Actually a ConversionPrintKind
+    unsigned ShowConversions:1;
     unsigned ShowBuiltInNonViable:1;
   }OvdlSettings;
 

@@ -2540,7 +2540,6 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
 
   if (Opts.ProgramAction == frontend::OvdlDump) {
     GenerateProgramAction = [&]() {
-      const std::string ConversionKinds[]={"NoConversionPrint","DenseConversionPrint","VerboseConversionPrint"};
       
       GenerateArg(Args, OPT_ovdl_dump_opt, 
           std::to_string(Opts.OvdlSettings.LineFrom)+"-"+
@@ -2551,7 +2550,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
           std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands")+ 
           std::string(Opts.OvdlSettings.ShowImplicitConversions?",ShowImplicitConversions":",HideImplicitConversions")+","+
           std::string(Opts.OvdlSettings.ShowBuiltInNonViable?",ShowBuiltInNonViable":",HideBuiltInNonViable")+","+
-          ConversionKinds[Opts.OvdlSettings.ConversionPrint], 
+          std::string(Opts.OvdlSettings.ShowConversions?",ShowConversions":",HideConversions"),
           SA);
     };
 
@@ -2765,12 +2764,10 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvdlSettings.ShowImplicitConversions=1;
         } else if (s=="HideImplicitConversions"){
           Opts.OvdlSettings.ShowImplicitConversions=0;
-        } else if (s=="NoConversionPrint") {
-          Opts.OvdlSettings.ConversionPrint=clang::FrontendOptions::CPK_No;
-        } else if (s=="DenseConversionPrint") {
-          Opts.OvdlSettings.ConversionPrint=clang::FrontendOptions::CPK_Dense;
-        } else if (s=="VerboseConversionPrint") {
-          Opts.OvdlSettings.ConversionPrint=clang::FrontendOptions::CPK_Verbose;
+        } else if (s=="ShowConversions"){
+          Opts.OvdlSettings.ShowConversions=1;
+        } else if (s=="HideConversions"){
+          Opts.OvdlSettings.ShowConversions=0;
         } else {
           unsigned lF=0,lT=0;
           unsigned actual=0;

@@ -10132,8 +10132,8 @@ bool clang::isBetterOverloadCandidate(
             Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
             Cand1.isReversed() ^ Cand2.isReversed())){
      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
-          Cand2IsSpecialization,moreSpecialized);
-      return Cand2IsSpecialization;
+          BetterTemplate==Cand1.Function->getPrimaryTemplate(),moreSpecialized);
+      return BetterTemplate==Cand1.Function->getPrimaryTemplate();
     }
 
   }
@@ -10218,7 +10218,6 @@ bool clang::isBetterOverloadCandidate(
         return Guide2->isImplicit();
       }
       //  -- F1 is the copy deduction candidate(16.3.1.8) and F2 is not
-//HBI what if F2 is copy deduction???
       if (Guide1->getDeductionCandidateKind() == DeductionCandidate::Copy){
         atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,guideCopy);
         return true;
@@ -10259,10 +10258,8 @@ bool clang::isBetterOverloadCandidate(
   bool HasPS2 = Cand2.Function != nullptr &&
                 functionHasPassObjectSizeParams(Cand2.Function);
   if (HasPS1 != HasPS2){
-      if (HasPS1){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,parameterObjectSize);
-	      return true;
-      }//else???
+     atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,HasPS1,parameterObjectSize);
+     return HasPS1;
   }
 
 
