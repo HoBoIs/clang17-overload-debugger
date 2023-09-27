@@ -1456,7 +1456,8 @@ TryUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
 
   // Attempt user-defined conversion.
   OverloadCandidateSet Conversions(From->getExprLoc(),
-                                   OverloadCandidateSet::CSK_Normal,From,From->getSourceRange().getEnd());
+                                   OverloadCandidateSet::CSK_Normal,
+                                   From,From->getEndLoc());
   switch (IsUserDefinedConversion(S, From, ToType, ICS.UserDefined,
                                   Conversions, AllowExplicit,
                                   AllowObjCConversionOnExplicit)) {
@@ -3768,7 +3769,8 @@ bool
 Sema::DiagnoseMultipleUserDefinedConversion(Expr *From, QualType ToType) {
   ImplicitConversionSequence ICS;
   OverloadCandidateSet CandidateSet(From->getExprLoc(),
-                                    OverloadCandidateSet::CSK_Normal,From,From->getSourceRange().getEnd());
+                                    OverloadCandidateSet::CSK_Normal,
+                                    From,From->getEndLoc());
   OverloadingResult OvResult =
     IsUserDefinedConversion(*this, From, ToType, ICS.UserDefined,
                             CandidateSet, AllowedExplicit::None, false);
@@ -4759,7 +4761,8 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
   auto *T2RecordDecl = cast<CXXRecordDecl>(T2->castAs<RecordType>()->getDecl());
 
   OverloadCandidateSet CandidateSet(
-      DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion,Init,Init->getSourceRange().getEnd());
+      DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion,
+      Init,Init->getEndLoc());
   const auto &Conversions = T2RecordDecl->getVisibleConversionFunctions();
   for (auto I = Conversions.begin(), E = Conversions.end(); I != E; ++I) {
     NamedDecl *D = *I;
@@ -6367,7 +6370,8 @@ ExprResult Sema::PerformContextualImplicitConversion(
     // If one unique T is found:
     // First, build a candidate set from the previously recorded
     // potentially viable conversions.
-    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,From,From->getSourceRange().getEnd());
+    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,
+                            From,From->getEndLoc());
     collectViableConversionCandidates(*this, From, ToType, ViableConversions,
                                       CandidateSet);
 
@@ -9993,7 +9997,8 @@ bool clang::isBetterOverloadCandidate(
   }
 
   if (HasBetterConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,badConversion,infoIdx);
+    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+        Cand1,Cand2,true,badConversion,infoIdx);
     return true;
   }
 
@@ -10001,10 +10006,25 @@ bool clang::isBetterOverloadCandidate(
   //   A viable function F1 is defined to be a better function than another
   //   viable function F2 if for all arguments i, ICSi(F1) is not a worse
   //   conversion sequence than ICSi(F2), and then...
+  if (__builtin_expect(!S.OverloadCallbacks.empty(),0)){
+    //UNLIKELY
+    bool isAny=false;
+    for (const auto& c:S.OverloadCallbacks)
+      isAny=isAny||c->needAllCompareInfo();
+    if (isAny){
+      std::vector<ImplicitConversionSequence::CompareKind> compares;
+      for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx) {
+        compares.push_back(CompareImplicitConversionSequences(S, Loc,
+                                          Cand1.Conversions[ArgIdx],
+                                          Cand2.Conversions[ArgIdx])); 
+    }
+    for (const auto& c:S.OverloadCallbacks)
+      if (c->needAllCompareInfo())
+        c->setCompareInfo(compares);
+    }
+  }
   bool HasWorseConversion = false;
   for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx) {
-    if (/*isLoging*/ !S.OverloadCallbacks.empty()){
-    }
     switch (CompareImplicitConversionSequences(S, Loc,
                                                Cand1.Conversions[ArgIdx],
                                                Cand2.Conversions[ArgIdx])) {
@@ -13205,7 +13225,7 @@ static bool DiagnoseTwoPhaseLookup(
     if (!R.empty()) {
       R.suppressDiagnostics();
 
-      OverloadCandidateSet Candidates(FnLoc, CSK,ArrayRef(Args));
+      OverloadCandidateSet Candidates(FnLoc, CSK,Args);
       SemaRef.AddOverloadedCallCandidates(R, ExplicitTemplateArgs, Args,
                                           Candidates);
 
@@ -14035,7 +14055,7 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
 
   // Build the overload set.
   OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,
-                          Args,Args[1]->getSourceRange().getEnd(),
+                          Args,Args[1]->getEndLoc(),
                           OverloadCandidateSet::OperatorRewriteInfo(
                             Op, OpLoc, AllowRewrittenCandidates));//???
   if (DefaultedFn)

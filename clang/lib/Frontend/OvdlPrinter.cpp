@@ -107,6 +107,7 @@ struct OvdlCompareEntry {
   std::string reason;
   bool C1Better;
   std::optional<std::string> deciderConversion;
+  std::vector<std::string> conversionCompares;
 };
 
 struct OvdlResEntry{
@@ -253,6 +254,8 @@ template <> struct MappingTraits<OvdlCompareEntry>{
     io.mapRequired("reason",fields.reason);
     if (fields.deciderConversion)
       io.mapOptional("Decider", *fields.deciderConversion);
+    if (fields.conversionCompares.size())
+      io.mapOptional("Conversions", fields.conversionCompares);
   }
 };
 template <> struct MappingTraits<OvdlResEntry>{
@@ -508,6 +511,18 @@ const QualType getToType(const ImplicitConversionSequence& C){
   }
   llvm_unreachable("Unknown ImplicitConversionSequence kind");
 }
+QualType getToType(const OverloadCandidate& C,int idx){
+  if (C.Function==nullptr)
+    return getToType(C.Conversions[idx]);
+  if (isa<CXXMethodDecl>(C.Function) && 
+      !isa<CXXConstructorDecl>(C.Function))
+    --idx;
+  if (idx==-1){
+    return getToType(C.Conversions[0]);//TODO:thistype
+    //return llvm::dyn_cast<CXXMethodDecl>(C.Function)->getThisObjectType();
+  }
+  return C.Function->parameters()[idx]->getType();
+}
 void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
   std::string YAML;
   {
@@ -518,7 +533,18 @@ void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
   }
   Out<<"---"<<YAML<<"\n";
 }
+using CompareKind = clang::ImplicitConversionSequence::CompareKind;
+std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
+    const OverloadCandidate& Cand2,int idx,CompareKind res){
+  const static  std::string compareSigns[3]{">","=","<"};
+  return "("+
+        getFromType(Cand1.Conversions[idx]).getAsString()+" -> "+
+        getToType(Cand1,idx).getAsString()+")  "+
+        compareSigns[res+1]+"  ("+
+        getFromType(Cand2.Conversions[idx]).getAsString()+" -> "+
+        getToType(Cand2,idx).getAsString()+")";
 
+}
 
 class DefaultOverloadInstCallback:public OverloadCallback{
   const Sema* S=nullptr;
@@ -528,8 +554,23 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   std::vector<OvdlCompareEntry> compares;
   OvdlResCont cont;
   clang::FrontendOptions::OvdlSettingsC settings;
+  std::vector<CompareKind> compareResults;
   //CompilerInstance& ci=CompilerInstance();
 public:
+  virtual bool needAllCompareInfo() const override{
+    return settings.ShowConversions==clang::FrontendOptions::SC_Verbose;
+  };
+  virtual void setCompareInfo(const std::vector<CompareKind>& c)override{
+    if (!Loc || !inBestOC) return;
+    PresumedLoc L=S->getSourceManager().getPresumedLoc(*Loc);
+    unsigned line=L.getLine();
+    llvm::errs()<<line<<" ";
+    if ((!L.getIncludeLoc().isValid() || settings.ShowIncludes) &&
+        settings.ShowCompares && line >= settings.LineFrom &&
+        (settings.LineTo==0 || line <= settings.LineTo)){
+      compareResults=c;
+    }
+  };
   void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){settings=s;};
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
@@ -541,7 +582,18 @@ public:
     S=&s;
     Set=&set;
     Loc=&loc;
+    PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     inBestOC=1;
+    unsigned line=L.getLine();
+    if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
+        line < settings.LineFrom || 
+        (line > settings.LineTo && settings.LineTo>0) ||
+        (!settings.ShowEmptyOverloads && set.empty())) {
+      compares={};
+      inBestOC=0;
+      return;
+    }
+
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
         const OverloadCandidateSet& set, OverloadingResult res, 
@@ -586,19 +638,18 @@ public:
     Entry.C2=getCandEntry(Cand2);
     Entry.reason=toString(reason);
     if (reason==clang::betterConversion){
-      std::string message="("+
-        getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
-        getToType(Cand1.Conversions[infoIdx]).getAsString()+
-        (res?")  >  (":")  <  (")+
-        getFromType(Cand2.Conversions[infoIdx]).getAsString()+" -> "+
-        getToType(Cand2.Conversions[infoIdx]).getAsString()+")";
+      std::string message=ConversionCompareAsString(Cand1,Cand2,infoIdx,res?CompareKind::Better:CompareKind::Worse);
       message+="    Place: "+std::to_string(infoIdx+1);
       Entry.deciderConversion=message;
     }else if (reason==clang::badConversion){
       std::string message=
         getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
-        getToType((res?Cand1:Cand2).Conversions[infoIdx]).getAsString();
+        getToType((res?Cand1:Cand2),infoIdx).getAsString();
       Entry.deciderConversion=message+" is ill formated";
+    }
+    for (size_t i=0; i!= compareResults.size(); ++i){
+      Entry.conversionCompares.push_back(ConversionCompareAsString(
+            Cand1,Cand2,i,compareResults[i]));
     }
     compares.push_back(Entry);
   }
@@ -642,7 +693,8 @@ public:
     for (size_t i=0; i<C.Conversions.size();++i){
       const auto& conv=C.Conversions[i];
       int idx=i;
-      if (C.Function && isa<CXXMethodDecl>(C.Function) && ! isa<CXXConstructorDecl>(C.Function))
+      if (C.Function && isa<CXXMethodDecl>(C.Function) && 
+          !isa<CXXConstructorDecl>(C.Function))
         --idx;
       res.push_back({});
       auto& act=res.back();
@@ -655,9 +707,10 @@ public:
         act.kind="Standard";
         act.path=conv.Standard.getFromType().getAsString();
         act.pathInfo=getConversionSeq(conv.Standard);
-        act.path+=" -> "+conv.Standard.getToType(2).getAsString();
         if (C.Function && idx!=-1)
           act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
+        else
+          act.path+=" -> "+conv.Standard.getToType(2).getAsString();
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         act.kind="StaticObjectConversion";
@@ -674,10 +727,10 @@ public:
             conv.UserDefined.After.Second || 
             conv.UserDefined.After.Third) 
           act.path+=" -> "+conv.UserDefined.After.getFromType().getAsString();
-        //act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
-        act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
         if (C.Function && idx!=-1)
           act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
+        else
+          act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
         act.kind="Ambigious";

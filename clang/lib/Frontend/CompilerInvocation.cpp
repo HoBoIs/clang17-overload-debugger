@@ -2540,7 +2540,9 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
 
   if (Opts.ProgramAction == frontend::OvdlDump) {
     GenerateProgramAction = [&]() {
-      
+      static const std::string ConvNames[]{
+        "HideConversions","ShowConversions","VerboseConversions"
+      };
       GenerateArg(Args, OPT_ovdl_dump_opt, 
           std::to_string(Opts.OvdlSettings.LineFrom)+"-"+
           std::to_string(Opts.OvdlSettings.LineTo)+
@@ -2550,7 +2552,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
           std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands")+ 
           std::string(Opts.OvdlSettings.ShowImplicitConversions?",ShowImplicitConversions":",HideImplicitConversions")+","+
           std::string(Opts.OvdlSettings.ShowBuiltInNonViable?",ShowBuiltInNonViable":",HideBuiltInNonViable")+","+
-          std::string(Opts.OvdlSettings.ShowConversions?",ShowConversions":",HideConversions"),
+          ConvNames[Opts.OvdlSettings.ShowConversions],
           SA);
     };
 
@@ -2765,9 +2767,11 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
         } else if (s=="HideImplicitConversions"){
           Opts.OvdlSettings.ShowImplicitConversions=0;
         } else if (s=="ShowConversions"){
-          Opts.OvdlSettings.ShowConversions=1;
+          Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Normal;
         } else if (s=="HideConversions"){
-          Opts.OvdlSettings.ShowConversions=0;
+          Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Hide;
+        } else if (s=="VerboseConversions"){
+          Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Verbose;
         } else {
           unsigned lF=0,lT=0;
           unsigned actual=0;
@@ -2790,7 +2794,11 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
               break;
             }
           }
-          if (valid && lFfinished){
+          if (valid && !lFfinished){
+            lT=lF=actual;
+            Opts.OvdlSettings.LineFrom=lF;
+            Opts.OvdlSettings.LineTo=lT;
+          }else if (valid && lFfinished){
             lT=actual;
             Opts.OvdlSettings.LineFrom=lF;
             Opts.OvdlSettings.LineTo=lT;

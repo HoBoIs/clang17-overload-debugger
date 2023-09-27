@@ -13,6 +13,8 @@ enum BetterOverloadCandidateReason{
 };
 class OverloadCallback{
 public:
+  virtual bool needAllCompareInfo() const=0;
+  virtual void setCompareInfo(const std::vector<ImplicitConversionSequence::CompareKind>&)=0;
   virtual ~OverloadCallback()=default;
   virtual void initialize(const Sema& TheSema)=0;
   virtual void finalize(const Sema& TheSema)=0;
