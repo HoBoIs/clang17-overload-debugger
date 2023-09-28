@@ -9869,15 +9869,17 @@ bool clang::isBetterOverloadCandidate(
     SourceLocation Loc, OverloadCandidateSet::CandidateSetKind Kind) {
   // Define viable functions to be better candidates than non-viable
   // functions.
-    atCompareOverloadBegin(S.OverloadCallbacks,S,Loc,Cand1,Cand2);
-    if (!Cand1.Viable){
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,viability);
-      return false;
-    }
-    if (!Cand2.Viable){
-    	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,viability);
-      return true;
-    }
+  atCompareOverloadBegin(S.OverloadCallbacks,S,Loc,Cand1,Cand2);
+  if (!Cand1.Viable){
+  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+                        Cand1,Cand2,false,viability);
+    return false;
+  }
+  if (!Cand2.Viable){
+  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+                        Cand1,Cand2,true,viability);
+    return true;
+  }
     
 
   // [CUDA] A function with 'never' preference is marked not viable, therefore
@@ -10013,13 +10015,11 @@ bool clang::isBetterOverloadCandidate(
       isAny=isAny||c->needAllCompareInfo();
     if (isAny){
       std::vector<ImplicitConversionSequence::CompareKind> compares;
-      for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx) {
+      for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx)
         compares.push_back(CompareImplicitConversionSequences(S, Loc,
                                           Cand1.Conversions[ArgIdx],
                                           Cand2.Conversions[ArgIdx])); 
-    }
-    for (const auto& c:S.OverloadCallbacks)
-      if (c->needAllCompareInfo())
+      for (const auto& c:S.OverloadCallbacks)
         c->setCompareInfo(compares);
     }
   }
@@ -10177,13 +10177,16 @@ bool clang::isBetterOverloadCandidate(
                                    AtLeastAsConstrained1) ||
           S.IsAtLeastAsConstrained(Function2, RC2, Function1, RC1,
                                    AtLeastAsConstrained2))
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
+                            false,moreSpecialized);
         return false;
       if (AtLeastAsConstrained1 != AtLeastAsConstrained2)
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,AtLeastAsConstrained1,moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+            Cand1,Cand2,AtLeastAsConstrained1,moreSpecialized);
         return AtLeastAsConstrained1;
     } else if (RC1 || RC2) {
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,RC1!=nullptr,moreSpecialized);
+      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+            Cand1,Cand2,RC1!=nullptr,moreSpecialized);
       return RC1 != nullptr;
     }
   }

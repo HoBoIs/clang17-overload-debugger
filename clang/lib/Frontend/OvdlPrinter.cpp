@@ -86,17 +86,25 @@ struct CandHash{
 struct OvdlConvEntry{
   std::string path,pathInfo;
   std::string kind;
+  bool operator==(const OvdlConvEntry& o) const{
+    return path==o.path && pathInfo == o.pathInfo && kind==o.kind;
+  }
+  
 };
 struct OvdlCandEntry{
   std::string declLocation;
   std::string name;
   std::string signature;
-  std::optional<std::string> templateSource;
-  //std::string Concepts; ???
-  //bool builtIn=0;
+  std::string templateSource;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
   std::vector<OvdlConvEntry> Conversions;
+  bool operator==(const OvdlCandEntry& o) const{
+    return declLocation == o.declLocation && name == o.name &&
+      signature == o.signature && templateSource == o.templateSource &&
+      failKind == o.failKind && extraFailInfo == o.extraFailInfo &&
+      Conversions == o.Conversions;
+  }
 };
 /*struct OvdlParamCompareEntry{
   std::string c1from,c2from;
@@ -108,6 +116,11 @@ struct OvdlCompareEntry {
   bool C1Better;
   std::optional<std::string> deciderConversion;
   std::vector<std::string> conversionCompares;
+  bool operator==(const OvdlCompareEntry& o)const{
+    return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
+      C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
+      conversionCompares == o.conversionCompares;
+  }
 };
 
 struct OvdlResEntry{
@@ -213,10 +226,8 @@ template <> struct ScalarEnumerationTraits<clang::OverloadFailureKind>{
 template <> struct MappingTraits<OvdlConvEntry>{
   static void mapping(IO& io, OvdlConvEntry& fields){
     io.mapRequired("kind",fields.kind);
-    if (fields.path!="")
-      io.mapOptional("path",fields.path);
-    if (fields.pathInfo!="")
-      io.mapOptional("pathInfo",fields.pathInfo);
+    io.mapOptional("path",fields.path,"");
+    io.mapOptional("pathInfo",fields.pathInfo,"");
   }
 };
 template <> struct MappingTraits<OvdlCandEntry>{
@@ -224,26 +235,21 @@ template <> struct MappingTraits<OvdlCandEntry>{
     io.mapRequired("Name",fields.name);
     io.mapRequired("Signature",fields.signature);
     io.mapRequired("declLocation",fields.declLocation);
-    if (fields.templateSource){
-      io.mapOptional("templateSource", *fields.templateSource);
-    }
-    /*if (!OvdlCandEntry::extraInfoHidden){
-      io.mapOptional("Builtin", fields.builtIn);
-    }*/
-
-    if (fields.Conversions.size()>0){
-      io.mapOptional("Conversions", fields.Conversions);
-    }
-    if (fields.failKind)
-      io.mapOptional("FailureKind", *fields.failKind);
-    if (fields.extraFailInfo)
-      io.mapOptional("extraFailInfo", *fields.extraFailInfo);
+    io.mapOptional("templateSource", fields.templateSource,"");
+    io.mapOptional("Conversions", fields.Conversions);
+    io.mapOptional("FailureKind", fields.failKind);
+    io.mapOptional("extraFailInfo", fields.extraFailInfo);
   }
 };
 template <>
 struct SequenceTraits<std::deque<std::string>> {
-    static size_t size(IO &io, std::deque<std::string> &list) { return list.size(); }
-      static std::string &element(IO &io, std::deque<std::string> &list, size_t index) { return list[index]; }
+  static size_t size(IO &io, std::deque<std::string> &list) { 
+    return list.size(); 
+  }
+  static std::string &element(IO &io, std::deque<std::string> &list,
+      size_t index) { 
+    return list[index]; 
+  }
   static const bool flow = true;
 };
 template <> struct MappingTraits<OvdlCompareEntry>{
@@ -252,10 +258,8 @@ template <> struct MappingTraits<OvdlCompareEntry>{
     io.mapRequired("C2",fields.C2);
     io.mapRequired("C1Better",fields.C1Better);
     io.mapRequired("reason",fields.reason);
-    if (fields.deciderConversion)
-      io.mapOptional("Decider", *fields.deciderConversion);
-    if (fields.conversionCompares.size())
-      io.mapOptional("Conversions", fields.conversionCompares);
+    io.mapOptional("Conversions", fields.conversionCompares);
+    io.mapOptional("Decider", fields.deciderConversion);
   }
 };
 template <> struct MappingTraits<OvdlResEntry>{
@@ -267,14 +271,11 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapRequired("callTypes",fields.callTypes);
     io.mapRequired("overloading result",fields.ovRes);
     io.mapRequired("viable candidates",fields.viableCandidates);
-    if (!fields.nonViableCandidates.empty())
-      io.mapOptional("non viable candidates",fields.nonViableCandidates);
-    if (fields.best)
-      io.mapOptional("best",*fields.best);
-    if (!fields.problems.empty())
-      io.mapOptional("problems",fields.problems);
-    if (!fields.compares.empty())
-      io.mapOptional("compares",fields.compares);
+
+    io.mapOptional("non viable candidates",fields.nonViableCandidates);
+    io.mapOptional("best",fields.best);
+    io.mapOptional("problems",fields.problems);
+    io.mapOptional("compares",fields.compares);
   }
 };
 
@@ -472,7 +473,7 @@ std::string toString(BetterOverloadCandidateReason r){
   case inconclusive:
     return "inconclusive";
   };
-  return "";//UNREACHABLE
+  llvm_unreachable("Unknown BetterOverloadCandidateReason");
 };
 const QualType getFromType(const ImplicitConversionSequence& C){
   if (! C.isInitialized()) return {};
@@ -538,12 +539,11 @@ std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
     const OverloadCandidate& Cand2,int idx,CompareKind res){
   const static  std::string compareSigns[3]{">","=","<"};
   return "("+
-        getFromType(Cand1.Conversions[idx]).getAsString()+" -> "+
-        getToType(Cand1,idx).getAsString()+")  "+
-        compareSigns[res+1]+"  ("+
-        getFromType(Cand2.Conversions[idx]).getAsString()+" -> "+
-        getToType(Cand2,idx).getAsString()+")";
-
+        getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString()+" -> "+
+        getToType(Cand1,idx).getCanonicalType().getAsString()+")\t"+
+        compareSigns[res+1]+"\t("+
+        getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString()+" -> "+
+        getToType(Cand2,idx).getCanonicalType().getAsString()+")";
 }
 
 class DefaultOverloadInstCallback:public OverloadCallback{
@@ -555,21 +555,14 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   OvdlResCont cont;
   clang::FrontendOptions::OvdlSettingsC settings;
   std::vector<CompareKind> compareResults;
-  //CompilerInstance& ci=CompilerInstance();
 public:
   virtual bool needAllCompareInfo() const override{
-    return settings.ShowConversions==clang::FrontendOptions::SC_Verbose;
+    return settings.ShowConversions==clang::FrontendOptions::SC_Verbose && 
+      inBestOC && settings.ShowCompares;
   };
   virtual void setCompareInfo(const std::vector<CompareKind>& c)override{
-    if (!Loc || !inBestOC) return;
-    PresumedLoc L=S->getSourceManager().getPresumedLoc(*Loc);
-    unsigned line=L.getLine();
-    llvm::errs()<<line<<" ";
-    if ((!L.getIncludeLoc().isValid() || settings.ShowIncludes) &&
-        settings.ShowCompares && line >= settings.LineFrom &&
-        (settings.LineTo==0 || line <= settings.LineTo)){
+    if (needAllCompareInfo()) 
       compareResults=c;
-    }
   };
   void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){settings=s;};
   virtual void initialize(const Sema&) override{};
@@ -598,7 +591,6 @@ public:
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
         const OverloadCandidateSet& set, OverloadingResult res, 
         const OverloadCandidate* BestOrProblem) override{
-    //TOFIX
     OvdlResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
@@ -622,12 +614,10 @@ public:
         const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)override{
   }
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
-        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason,int infoIdx) override {
+        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,
+        BetterOverloadCandidateReason reason,int infoIdx) override {
     if (!inBestOC || !settings.ShowCompares) {return;}
     PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
-    if (!L.isValid()){
-
-    }
     if (!L.isValid() || (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         L.getLine() < settings.LineFrom || 
         (L.getLine() > settings.LineTo && settings.LineTo>0)) 
@@ -636,23 +626,42 @@ public:
     Entry.C1Better=res;
     Entry.C1=getCandEntry(Cand1);
     Entry.C2=getCandEntry(Cand2);
+    if (1/*removeing_duplicates*/){
+      for (const auto& E:compares){
+        if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
+      }
+    }//Filter for best only???
     Entry.reason=toString(reason);
     if (reason==clang::betterConversion){
-      std::string message=ConversionCompareAsString(Cand1,Cand2,infoIdx,res?CompareKind::Better:CompareKind::Worse);
+      std::string message=ConversionCompareAsString(Cand1,Cand2,infoIdx,
+          res?CompareKind::Better:CompareKind::Worse);
       message+="    Place: "+std::to_string(infoIdx+1);
       Entry.deciderConversion=message;
     }else if (reason==clang::badConversion){
       std::string message=
         getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
-        getToType((res?Cand1:Cand2),infoIdx).getAsString();
+        getToType((res?Cand2:Cand1),infoIdx).getAsString();
       Entry.deciderConversion=message+" is ill formated";
     }
     for (size_t i=0; i!= compareResults.size(); ++i){
       Entry.conversionCompares.push_back(ConversionCompareAsString(
             Cand1,Cand2,i,compareResults[i]));
     }
+    if (1/*removeing_mirrors*/){
+      for (auto& E:compares){
+        if (E.C1==Entry.C2 && E.C2==Entry.C1){ 
+          if (!E.C1Better && Entry.C1Better){
+            E=Entry;
+            return;
+          }else if (!E.C1Better && !Entry.C1Better){
+            /*Ambigioty, keep it*/
+          }else return;
+        }
+      }
+    }
     compares.push_back(Entry);
   }
+private:
   std::optional<std::string> getExtraFailInfo(const OverloadCandidate& C){
     if (C.Viable) return {};
     switch ((OverloadFailureKind)C.FailureKind) {
@@ -676,7 +685,11 @@ public:
     case ovl_fail_bad_final_conversion:
     case ovl_fail_final_conversion_not_exact:
     case ovl_fail_bad_target:
-    case ovl_fail_enable_if:
+      return {};
+    case ovl_fail_enable_if:{
+        EnableIfAttr *Attr = static_cast<EnableIfAttr*>(C.DeductionFailure.Data);
+        return (std::string)Attr->getMessage();
+      }
     case ovl_fail_explicit:
     case ovl_fail_addr_not_available:
     case ovl_fail_inhctor_slice:
@@ -795,7 +808,6 @@ public:
       }
       res.templateSource=getTemplate(C);
       res.signature+=getSignature(C);
-      if (res.templateSource=="") res.templateSource={};
       //res.nameSignature+=" - "+getSignature(*C.Function);
     }else{
       llvm::errs()<<"\n"<<res.name<<"";
@@ -813,7 +825,6 @@ public:
     }
     const FunctionDecl* f=nd->getAsFunction();
     /*TODO if !f*/
-    //if (isa<UsingShadowDecl>(*C.FoundDecl)) llvm::errs()<<"USD";
     if (!f)llvm::errs()<<C.FoundDecl->getLocation().printToString(S->SourceMgr)<<'\n';
     if (!f||!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
@@ -881,9 +892,6 @@ public:
     if (!Args.empty() && Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
       begloc=Args[0]->getBeginLoc();
     }
-    /*if (objParamRange!=SourceRange() && objParamRange.getBegin()<begloc){
-      begloc=objParamRange.getBegin();
-    }*/
     if (!Args.empty()&& Args.back()!=0){
       SourceLocation endloc1(Lexer::getLocForEndOfToken(Args.back()->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
       if (endloc<endloc1) endloc=endloc1;
@@ -912,9 +920,8 @@ public:
         res.callTypes.push_back(x->getType().getAsString()+" literal");
       else
         res.callTypes.push_back(x->getType().getAsString());
-      if (!x->isLValue()) res.callTypes.back()+="!LV ";
+      //if (!x->isLValue()) res.callTypes.back()+="!LV ";
     }
-    S->getSourceManager();
     for (const auto& cand:*Set){
       if (cand.Viable)
         res.viableCandidates.push_back(getCandEntry(cand));
@@ -926,8 +933,8 @@ public:
     }
     return res;
   }
-  };
-  }//namespace
+};
+}//namespace
 std::unique_ptr<ASTConsumer>
 OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
     return std::make_unique<ASTConsumer>();
@@ -941,5 +948,3 @@ void OvdlDumpAction::ExecuteAction(){
   CI.getSema().OverloadCallbacks.push_back(std::move(x));
   ASTFrontendAction::ExecuteAction();
 }
-
-
