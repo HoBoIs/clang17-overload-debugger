@@ -10338,7 +10338,7 @@ bool clang::isBetterOverloadCandidate(
 /// declarations visible to be ambiguous in some cases (this happens when using
 /// a modularized libstdc++).
 bool Sema::isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
-                                                  const NamedDecl *B) {
+                                                  const NamedDecl *B) const{
   auto *VA = dyn_cast_or_null<ValueDecl>(A);
   auto *VB = dyn_cast_or_null<ValueDecl>(B);
   if (!VA || !VB)
