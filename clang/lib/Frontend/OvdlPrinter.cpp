@@ -68,14 +68,19 @@ struct CandHash{
       if (C.IsSurrogate)
         res=(res<<1) ^ std::hash<void*>{}(C.Surrogate);
       else if (C.Function==0){
-        res=(res<<1) ^std::hash<const void*>{}(C.BuiltinParamTypes[0].getTypePtrOrNull());
-        res=(res<<1) ^std::hash<const void*>{}(C.BuiltinParamTypes[1].getTypePtrOrNull());
-        res=(res<<1) ^std::hash<const void*>{}(C.BuiltinParamTypes[2].getTypePtrOrNull());
+        res=(res<<1) ^std::hash<const void*>{}
+          (C.BuiltinParamTypes[0].getTypePtrOrNull());
+        res=(res<<1) ^std::hash<const void*>{}
+          (C.BuiltinParamTypes[1].getTypePtrOrNull());
+        res=(res<<1) ^std::hash<const void*>{}
+          (C.BuiltinParamTypes[2].getTypePtrOrNull());
       }
       res=(res<<1) ^ std::hash<void*>{}(C.Conversions.data());
       res=(res<<1) ^ std::hash<unsigned char>{}(C.FailureKind);
       res=(res<<1) ^ std::hash<unsigned>{}(C.ExplicitCallArguments);
-      res=(res<<1) ^ std::hash<char>{}(C.Viable|(C.Best<<1)|(C.IsSurrogate<<2)|(C.IgnoreObjectArgument<<3)|((bool)C.IsADLCandidate<<4)|(C.RewriteKind<<5));
+      res=(res<<1) ^ std::hash<char>{}(C.Viable|(C.Best<<1)|
+          (C.IsSurrogate<<2)|(C.IgnoreObjectArgument<<3)|
+          ((bool)C.IsADLCandidate<<4)|(C.RewriteKind<<5));
       res=(res<<1) ^ std::hash<void*>{}(C.FoundDecl);
       res=(res<<1) ^ std::hash<void*>{}(C.Function);
       return res;
@@ -589,7 +594,7 @@ public:
 
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
-        const OverloadCandidateSet& set, OverloadingResult res, 
+        const OverloadCandidateSet& set, OverloadingResult ovRes, 
         const OverloadCandidate* BestOrProblem) override{
     OvdlResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
@@ -603,7 +608,9 @@ public:
       inBestOC=0;
       return;
     }
-    node.Entry=getResEntry(res,BestOrProblem);
+    node.Entry=getResEntry(ovRes,BestOrProblem);
+    if (!settings.ShowAllCompares)
+      filterForRelevant(node.Entry);
     node.Entry.compares=std::move(compares);
     compares={};
     if (!isImplicit || settings.ShowImplicitConversions)
@@ -626,10 +633,8 @@ public:
     Entry.C1Better=res;
     Entry.C1=getCandEntry(Cand1);
     Entry.C2=getCandEntry(Cand2);
-    if (1/*removeing_duplicates*/){
-      for (const auto& E:compares){
-        if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
-      }
+    for (const auto& E:compares){//Removeing duplicates
+      if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
     }//Filter for best only???
     Entry.reason=toString(reason);
     if (reason==clang::betterConversion){
@@ -647,21 +652,36 @@ public:
       Entry.conversionCompares.push_back(ConversionCompareAsString(
             Cand1,Cand2,i,compareResults[i]));
     }
-    if (1/*removeing_mirrors*/){
-      for (auto& E:compares){
-        if (E.C1==Entry.C2 && E.C2==Entry.C1){ 
-          if (!E.C1Better && Entry.C1Better){
-            E=Entry;
-            return;
-          }else if (!E.C1Better && !Entry.C1Better){
-            /*Ambigioty, keep it*/
-          }else return;
-        }
+    for (auto& E:compares){//Reboveing mirrors
+      if (E.C1==Entry.C2 && E.C2==Entry.C1){ 
+        if (!E.C1Better && Entry.C1Better){
+          E=Entry;//Keep the one where C1 is better
+          return;
+        }else if (!E.C1Better && !Entry.C1Better){
+          /*Ambigioty, keep both*/
+        }else return;
       }
     }
     compares.push_back(Entry);
   }
 private:
+  void filterForRelevant(OvdlResEntry& Entry){
+    std::vector<OvdlCandEntry> relevants=Entry.problems;
+    if (relevants.empty() && Entry.best)
+      relevants.push_back(*Entry.best);
+    for (size_t i=0; i<Entry.compares.size();++i){
+      bool isRelevant=0;
+      for (const auto& relevant:relevants){
+        isRelevant=isRelevant||Entry.compares[i].C1 == relevant;
+        isRelevant=isRelevant||Entry.compares[i].C2 == relevant;
+      }
+      if (!isRelevant){
+        std::swap(Entry.compares[i],Entry.compares.back());
+        Entry.compares.pop_back();
+        --i;
+      }
+    }
+  }
   std::optional<std::string> getExtraFailInfo(const OverloadCandidate& C){
     if (C.Viable) return {};
     switch ((OverloadFailureKind)C.FailureKind) {

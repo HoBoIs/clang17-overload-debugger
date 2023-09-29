@@ -2552,6 +2552,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
           std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands")+ 
           std::string(Opts.OvdlSettings.ShowImplicitConversions?",ShowImplicitConversions":",HideImplicitConversions")+","+
           std::string(Opts.OvdlSettings.ShowBuiltInNonViable?",ShowBuiltInNonViable":",HideBuiltInNonViable")+","+
+          std::string(Opts.OvdlSettings.ShowAllCompares?",ShowAllCompares":",HideAllCompares")+","+
           ConvNames[Opts.OvdlSettings.ShowConversions],
           SA);
     };
@@ -2766,6 +2767,10 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvdlSettings.ShowImplicitConversions=1;
         } else if (s=="HideImplicitConversions"){
           Opts.OvdlSettings.ShowImplicitConversions=0;
+        } else if (s=="ShowAllCompares"){
+          Opts.OvdlSettings.ShowAllCompares=1;
+        } else if (s=="HideAllCompares"){
+          Opts.OvdlSettings.ShowAllCompares=0;
         } else if (s=="ShowConversions"){
           Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Normal;
         } else if (s=="HideConversions"){
