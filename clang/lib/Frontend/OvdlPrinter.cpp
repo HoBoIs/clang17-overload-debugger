@@ -47,47 +47,6 @@ void EnsureSemaIsCreated(CompilerInstance &CI, FrontendAction &Action) {
 } // namespace
 
 namespace {
-  struct CandEq{
-    bool operator()(const OverloadCandidate& A,const OverloadCandidate& B)const noexcept{
-      return A.Function==B.Function && A.FoundDecl==B.FoundDecl &&
-        A.ExplicitCallArguments ==B.ExplicitCallArguments &&A.FailureKind==B.FailureKind&&
-        A.RewriteKind == B.RewriteKind && A.Conversions.data()==B.Conversions.data() && 
-        A.IsSurrogate==B.IsSurrogate && (A.IsSurrogate?A.Surrogate==B.Surrogate:1) &&
-        A.Viable==B.Viable && A.Best==B.Best && 
-        A.IgnoreObjectArgument==B.IgnoreObjectArgument && 
-        A.IsADLCandidate==B.IsADLCandidate && A.RewriteKind==B.RewriteKind && 
-        (!A.IsSurrogate && !A.Function?
-         A.BuiltinParamTypes[0]==B.BuiltinParamTypes[0] && 
-         A.BuiltinParamTypes[1]==B.BuiltinParamTypes[1] && 
-         A.BuiltinParamTypes[2]==B.BuiltinParamTypes[2]:1);
-    }
-  };
-struct CandHash{
-    size_t operator()(const OverloadCandidate& C)const noexcept{
-      size_t res=0;
-      if (C.IsSurrogate)
-        res=(res<<1) ^ std::hash<void*>{}(C.Surrogate);
-      else if (C.Function==0){
-        res=(res<<1) ^std::hash<const void*>{}
-          (C.BuiltinParamTypes[0].getTypePtrOrNull());
-        res=(res<<1) ^std::hash<const void*>{}
-          (C.BuiltinParamTypes[1].getTypePtrOrNull());
-        res=(res<<1) ^std::hash<const void*>{}
-          (C.BuiltinParamTypes[2].getTypePtrOrNull());
-      }
-      res=(res<<1) ^ std::hash<void*>{}(C.Conversions.data());
-      res=(res<<1) ^ std::hash<unsigned char>{}(C.FailureKind);
-      res=(res<<1) ^ std::hash<unsigned>{}(C.ExplicitCallArguments);
-      res=(res<<1) ^ std::hash<char>{}(C.Viable|(C.Best<<1)|
-          (C.IsSurrogate<<2)|(C.IgnoreObjectArgument<<3)|
-          ((bool)C.IsADLCandidate<<4)|(C.RewriteKind<<5));
-      res=(res<<1) ^ std::hash<void*>{}(C.FoundDecl);
-      res=(res<<1) ^ std::hash<void*>{}(C.Function);
-      return res;
-    }
-  };
-
-
 struct OvdlConvEntry{
   std::string path,pathInfo;
   std::string kind;
@@ -151,20 +110,6 @@ public:
   using iterator=std::vector<OvdlResNode>::iterator;
   iterator begin() { return data.begin();}
   iterator end() { return data.end();}
-  OvdlResCont filter() const{
-    return filterByFun([this](const OvdlResNode& x){
-      return !(x.line>=filterSettings.lineFrom && x.line<filterSettings.lineTo &&
-        (filterSettings.Fname=="" || filterSettings.Fname==x.Fname) && 
-        (filterSettings.printEmpty || !x.Entry.viableCandidates.empty()));
-    });
-  }
-  template<class Callable>
-  OvdlResCont filterByFun(Callable Fun) const{
-    OvdlResCont res(*this);
-    res.data.erase(std::remove_if(res.data.begin(),res.data.end(),Fun),res.data.end());
-    return res;
-  }
-
   void add(const OvdlResNode& newnode){
     data.push_back(newnode);
   }
@@ -209,23 +154,40 @@ template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
 };
 template <> struct ScalarEnumerationTraits<clang::OverloadFailureKind>{
   static void enumeration(IO& io, clang::OverloadFailureKind& val){
-      io.enumCase(val,"ovl_fail_too_many_arguments",ovl_fail_too_many_arguments);
-      io.enumCase(val,"ovl_fail_too_few_arguments",ovl_fail_too_few_arguments);
-      io.enumCase(val,"ovl_fail_bad_conversion",ovl_fail_bad_conversion);
-      io.enumCase(val,"ovl_fail_bad_deduction",ovl_fail_bad_deduction);
-      io.enumCase(val,"ovl_fail_trivial_conversion",ovl_fail_trivial_conversion);
-      io.enumCase(val,"ovl_fail_illegal_constructor",ovl_fail_illegal_constructor);
-      io.enumCase(val,"ovl_fail_bad_final_conversion",ovl_fail_bad_final_conversion);
-      io.enumCase(val,"ovl_fail_final_conversion_not_exact",ovl_fail_final_conversion_not_exact);
-      io.enumCase(val,"ovl_fail_bad_target",ovl_fail_bad_target);
-      io.enumCase(val,"ovl_fail_enable_if",ovl_fail_enable_if);
-      io.enumCase(val,"ovl_fail_explicit",ovl_fail_explicit);
-      io.enumCase(val,"ovl_fail_addr_not_available",ovl_fail_addr_not_available);
-      io.enumCase(val,"ovl_fail_inhctor_slice",ovl_fail_inhctor_slice);
-      io.enumCase(val,"ovl_non_default_multiversion_function",ovl_non_default_multiversion_function);
-      io.enumCase(val,"ovl_fail_object_addrspace_mismatch",ovl_fail_object_addrspace_mismatch);
-      io.enumCase(val,"ovl_fail_constraints_not_satisfied",ovl_fail_constraints_not_satisfied);
-      io.enumCase(val,"ovl_fail_module_mismatched",ovl_fail_module_mismatched);
+    io.enumCase(val,"ovl_fail_too_many_arguments",
+               ovl_fail_too_many_arguments);
+    io.enumCase(val,"ovl_fail_too_few_arguments",
+               ovl_fail_too_few_arguments);
+    io.enumCase(val,"ovl_fail_bad_conversion",
+               ovl_fail_bad_conversion);
+    io.enumCase(val,"ovl_fail_bad_deduction",
+               ovl_fail_bad_deduction);
+    io.enumCase(val,"ovl_fail_trivial_conversion",
+               ovl_fail_trivial_conversion);
+    io.enumCase(val,"ovl_fail_illegal_constructor",
+               ovl_fail_illegal_constructor);
+    io.enumCase(val,"ovl_fail_bad_final_conversion",
+               ovl_fail_bad_final_conversion);
+    io.enumCase(val,"ovl_fail_final_conversion_not_exact",
+               ovl_fail_final_conversion_not_exact);
+    io.enumCase(val,"ovl_fail_bad_target",
+               ovl_fail_bad_target);
+    io.enumCase(val,"ovl_fail_enable_if",
+               ovl_fail_enable_if);
+    io.enumCase(val,"ovl_fail_explicit",
+               ovl_fail_explicit);
+    io.enumCase(val,"ovl_fail_addr_not_available",
+               ovl_fail_addr_not_available);
+    io.enumCase(val,"ovl_fail_inhctor_slice",
+               ovl_fail_inhctor_slice);
+    io.enumCase(val,"ovl_non_default_multiversion_function",
+               ovl_non_default_multiversion_function);
+    io.enumCase(val,"ovl_fail_object_addrspace_mismatch",
+               ovl_fail_object_addrspace_mismatch);
+    io.enumCase(val,"ovl_fail_constraints_not_satisfied",
+               ovl_fail_constraints_not_satisfied);
+    io.enumCase(val,"ovl_fail_module_mismatched",
+               ovl_fail_module_mismatched);
     }
 };
 template <> struct MappingTraits<OvdlConvEntry>{
@@ -319,11 +281,125 @@ std::string toString(ImplicitConversionKind e){
   case ICK_Zero_Event_Conversion: return "Zero_Event_Conversion";
   case ICK_Zero_Queue_Conversion: return "Zero_Queue_Conversion";
   case ICK_C_Only_Conversion: return "C_Only_Conversion";
-  case ICK_Incompatible_Pointer_Conversion: return "Incompatible_Pointer_Conversion";
+  case ICK_Incompatible_Pointer_Conversion: 
+                              return "Incompatible_Pointer_Conversion";
   case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
   }
   llvm_unreachable("Unknown ImplicitConversionKind");
 }
+std::string toString(Sema::TemplateDeductionResult r){
+  switch (r) {
+  case Sema::TDK_Success: return "TDK_Success";
+  case Sema::TDK_Invalid: return "TDK_Invalid";
+  case Sema::TDK_InstantiationDepth: return "TDK_InstantiationDepth";
+  case Sema::TDK_Incomplete: return "TDK_Incomplete";
+  case Sema::TDK_IncompletePack: return "TDK_IncompletePack";
+  case Sema::TDK_Inconsistent: return "TDK_Inconsistent";
+  case Sema::TDK_Underqualified: return "TDK_Underqualified";
+  case Sema::TDK_SubstitutionFailure: return "TDK_SubstitutionFailure";
+  case Sema::TDK_DeducedMismatch: return "TDK_DeducedMismatch";
+  case Sema::TDK_DeducedMismatchNested: return "TDK_DeducedMismatchNested";
+  case Sema::TDK_NonDeducedMismatch: return "TDK_NonDeducedMismatch";
+  case Sema::TDK_TooManyArguments: return "TDK_TooManyArguments";
+  case Sema::TDK_TooFewArguments: return "TDK_TooFewArguments";
+  case Sema::TDK_InvalidExplicitArguments: 
+                                  return "TDK_InvalidExplicitArguments";
+  case Sema::TDK_NonDependentConversionFailure: 
+                                  return "TDK_NonDependentConversionFailure";
+  case Sema::TDK_ConstraintsNotSatisfied: 
+                                  return "TDK_ConstraintsNotSatisfied";
+  case Sema::TDK_MiscellaneousDeductionFailure: 
+                                  return "TDK_MiscellaneousDeductionFailure";
+  case Sema::TDK_CUDATargetMismatch: return "TDK_CUDATargetMismatch";
+  case Sema::TDK_AlreadyDiagnosed: return "TDK_AlreadyDiagnosed";
+  }
+llvm_unreachable("unknown TemplateDeductionResult");
+}
+std::string toString(ImplicitConversionRank e){
+  switch(e){
+  case ICR_Exact_Match:
+    return "Exact Match";
+  case ICR_Promotion:
+    return "Promotion";
+  case ICR_Conversion:
+    return "Conversion";
+  case ICR_OCL_Scalar_Widening:
+    return "ScalarWidening";
+  case ICR_Complex_Real_Conversion:
+    return "Complex-Real";
+  case ICR_Writeback_Conversion:
+    return "Writeback";
+  case ICR_C_Conversion:
+    return "C Only";
+  case ICR_C_Conversion_Extension:
+    return "Not standard";
+  }
+llvm_unreachable("unknown enum");
+}
+std::string toString(BadConversionSequence::FailureKind k){
+  switch (k) {
+  case BadConversionSequence::no_conversion: 
+    return "no_conversion";
+  case BadConversionSequence::unrelated_class: 
+    return "unrelated_class";
+  case BadConversionSequence::bad_qualifiers: 
+    return "bad_qualifiers";
+  case BadConversionSequence::lvalue_ref_to_rvalue: 
+    return "lvalue_ref_to_rvalue";
+  case BadConversionSequence::rvalue_ref_to_lvalue: 
+    return "rvalue_ref_to_lvalue";
+  case BadConversionSequence::too_few_initializers: 
+    return "too_few_initializers";
+  case BadConversionSequence::too_many_initializers: 
+    return "too_many_initializers";
+  }
+llvm_unreachable("unknown FaliureKind");
+}
+std::string toString(BetterOverloadCandidateReason r){
+  switch(r){
+    case viability:
+    return "viability";
+  case CUDAEmit:
+    return "CUDAEmit";
+  case badConversion:
+    return "badConversion";
+  case betterConversion:
+    return "betterConversion";
+  case betterImplicitConversion:
+    return "betterImplicitConversion";
+  case constructor:
+    return "constructor";
+  case isSpecialization:
+    return "isSpecialization";
+  case moreSpecialized:
+    return "moreSpecialized";
+  case isInherited:
+    return "isInherited";
+  case derivedFromOther:
+    return "derivedFromOther";
+  case RewriteKind:
+    return "RewriteKind";
+  case guideImplicit:
+    return "guideImplicit";
+  case guideCopy:
+    return "guideCopy";
+  case guideTemplated:
+    return "guideTemplated";
+  case enableIf:
+    return "enableIf";
+  case parameterObjectSize:
+    return "parameterObjectSize";
+  case multiversion:
+    return "multiversion";
+  case CUDApreference:
+    return "CUDApreference";
+  case addressSpace:
+    return "addressSpace";
+  case inconclusive:
+    return "inconclusive";
+  };
+  llvm_unreachable("Unknown BetterOverloadCandidateReason");
+};
 std::string getConversionSeq(const StandardConversionSequence& cs){
   std::string res;
   bool PrintedSomething = false;
@@ -378,108 +454,7 @@ std::string getConversionSeq(const UserDefinedConversionSequence& cs){
   }
   return res;
 }
-std::string toString(Sema::TemplateDeductionResult r){
-  switch (r) {
-  case Sema::TDK_Success: return "TDK_Success";
-  case Sema::TDK_Invalid: return "TDK_Invalid";
-  case Sema::TDK_InstantiationDepth: return "TDK_InstantiationDepth";
-  case Sema::TDK_Incomplete: return "TDK_Incomplete";
-  case Sema::TDK_IncompletePack: return "TDK_IncompletePack";
-  case Sema::TDK_Inconsistent: return "TDK_Inconsistent";
-  case Sema::TDK_Underqualified: return "TDK_Underqualified";
-  case Sema::TDK_SubstitutionFailure: return "TDK_SubstitutionFailure";
-  case Sema::TDK_DeducedMismatch: return "TDK_DeducedMismatch";
-  case Sema::TDK_DeducedMismatchNested: return "TDK_DeducedMismatchNested";
-  case Sema::TDK_NonDeducedMismatch: return "TDK_NonDeducedMismatch";
-  case Sema::TDK_TooManyArguments: return "TDK_TooManyArguments";
-  case Sema::TDK_TooFewArguments: return "TDK_TooFewArguments";
-  case Sema::TDK_InvalidExplicitArguments: return "TDK_InvalidExplicitArguments";
-  case Sema::TDK_NonDependentConversionFailure: return "TDK_NonDependentConversionFailure";
-  case Sema::TDK_ConstraintsNotSatisfied: return "TDK_ConstraintsNotSatisfied";
-  case Sema::TDK_MiscellaneousDeductionFailure: return "TDK_MiscellaneousDeductionFailure";
-  case Sema::TDK_CUDATargetMismatch: return "TDK_CUDATargetMismatch";
-  case Sema::TDK_AlreadyDiagnosed: return "TDK_AlreadyDiagnosed";
-  }
-llvm_unreachable("unknown TemplateDeductionResult");
-}
-std::string toString(ImplicitConversionRank e){
-  switch(e){
-  case ICR_Exact_Match:
-    return "Exact Match";
-  case ICR_Promotion:
-    return "Promotion";
-  case ICR_Conversion:
-    return "Conversion";
-  case ICR_OCL_Scalar_Widening:
-    return "ScalarWidening";
-  case ICR_Complex_Real_Conversion:
-    return "Complex-Real";
-  case ICR_Writeback_Conversion:
-    return "Writeback";
-  case ICR_C_Conversion:
-    return "C Only";
-  case ICR_C_Conversion_Extension:
-    return "Not standard";
-  }
-llvm_unreachable("unknown enum");
-}
-std::string toString(BadConversionSequence::FailureKind k){
-  switch (k) {
-  case BadConversionSequence::no_conversion: return "no_conversion";
-  case BadConversionSequence::unrelated_class: return "unrelated_class";
-  case BadConversionSequence::bad_qualifiers: return "bad_qualifiers";
-  case BadConversionSequence::lvalue_ref_to_rvalue: return "lvalue_ref_to_rvalue";
-  case BadConversionSequence::rvalue_ref_to_lvalue: return "rvalue_ref_to_lvalue";
-  case BadConversionSequence::too_few_initializers: return "too_few_initializers";
-  case BadConversionSequence::too_many_initializers: return "too_many_initializers";
-  }
-llvm_unreachable("unknown FaliureKind");
-}
-std::string toString(BetterOverloadCandidateReason r){
-  switch(r){
-    case viability:
-    return "viability";
-  case CUDAEmit:
-    return "CUDAEmit";
-  case badConversion:
-    return "badConversion";
-  case betterConversion:
-    return "betterConversion";
-  case betterImplicitConversion:
-    return "betterImplicitConversion";
-  case constructor:
-    return "constructor";
-  case isSpecialization:
-    return "isSpecialization";
-  case moreSpecialized:
-    return "moreSpecialized";
-  case isInherited:
-    return "isInherited";
-  case derivedFromOther:
-    return "derivedFromOther";
-  case RewriteKind:
-    return "RewriteKind";
-  case guideImplicit:
-    return "guideImplicit";
-  case guideCopy:
-    return "guideCopy";
-  case guideTemplated:
-    return "guideTemplated";
-  case enableIf:
-    return "enableIf";
-  case parameterObjectSize:
-    return "parameterObjectSize";
-  case multiversion:
-    return "multiversion";
-  case CUDApreference:
-    return "CUDApreference";
-  case addressSpace:
-    return "addressSpace";
-  case inconclusive:
-    return "inconclusive";
-  };
-  llvm_unreachable("Unknown BetterOverloadCandidateReason");
-};
+
 const QualType getFromType(const ImplicitConversionSequence& C){
   if (! C.isInitialized()) return {};
   switch (C.getKind()) {
@@ -544,11 +519,11 @@ std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
     const OverloadCandidate& Cand2,int idx,CompareKind res){
   const static  std::string compareSigns[3]{">","=","<"};
   return "("+
-        getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString()+" -> "+
-        getToType(Cand1,idx).getCanonicalType().getAsString()+")\t"+
-        compareSigns[res+1]+"\t("+
-        getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString()+" -> "+
-        getToType(Cand2,idx).getCanonicalType().getAsString()+")";
+      getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString()
+      +" -> "+getToType(Cand1,idx).getCanonicalType().getAsString()+")\t"+
+      compareSigns[res+1]+"\t("+
+      getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString()
+      +" -> "+getToType(Cand2,idx).getCanonicalType().getAsString()+")";
 }
 
 class DefaultOverloadInstCallback:public OverloadCallback{
@@ -569,28 +544,30 @@ public:
     if (needAllCompareInfo()) 
       compareResults=c;
   };
-  void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){settings=s;};
+  void setSettings(const clang::FrontendOptions::OvdlSettingsC& s){
+    settings=s;
+  }
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
   virtual void atEnd() override{
     for (auto& x:cont)
       displayOvdlResEntry(llvm::outs(),x.Entry);
   }
-  virtual void atOverloadBegin(const Sema&s,const SourceLocation& loc,const OverloadCandidateSet& set) override{
+  virtual void atOverloadBegin(const Sema&s,const SourceLocation& loc,
+      const OverloadCandidateSet& set) override{
     S=&s;
     Set=&set;
     Loc=&loc;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
-    inBestOC=1;
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         line < settings.LineFrom || 
         (line > settings.LineTo && settings.LineTo>0) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares={};
-      inBestOC=0;
       return;
     }
+    inBestOC=1;
 
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
@@ -617,15 +594,17 @@ public:
       cont.add(node);
     inBestOC=0;
   }
-  virtual void atCompareOverloadBegin(const Sema& TheSema,const SourceLocation& Loc,
-        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)override{
+  virtual void atCompareOverloadBegin(const Sema& S,const SourceLocation& Loc,
+        const OverloadCandidate &C1, const OverloadCandidate &C2)override{
   }
-  virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
-        const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,
+  virtual void atCompareOverloadEnd(const Sema& TheSema,
+      const SourceLocation& Loc, const OverloadCandidate &Cand1, 
+      const OverloadCandidate &Cand2, bool res,
         BetterOverloadCandidateReason reason,int infoIdx) override {
     if (!inBestOC || !settings.ShowCompares) {return;}
     PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
-    if (!L.isValid() || (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
+    if (!L.isValid() || 
+        (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         L.getLine() < settings.LineFrom || 
         (L.getLine() > settings.LineTo && settings.LineTo>0)) 
       return;
@@ -633,9 +612,11 @@ public:
     Entry.C1Better=res;
     Entry.C1=getCandEntry(Cand1);
     Entry.C2=getCandEntry(Cand2);
+    if (Entry.C1==Entry.C2)
+      return;//EquivalentInternalLinkageDeclaration
     for (const auto& E:compares){//Removeing duplicates
       if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
-    }//Filter for best only???
+    }
     Entry.reason=toString(reason);
     if (reason==clang::betterConversion){
       std::string message=ConversionCompareAsString(Cand1,Cand2,infoIdx,
@@ -652,7 +633,7 @@ public:
       Entry.conversionCompares.push_back(ConversionCompareAsString(
             Cand1,Cand2,i,compareResults[i]));
     }
-    for (auto& E:compares){//Reboveing mirrors
+    for (auto& E:compares){//Removeing mirrors
       if (E.C1==Entry.C2 && E.C2==Entry.C1){ 
         if (!E.C1Better && Entry.C1Better){
           E=Entry;//Keep the one where C1 is better
@@ -692,14 +673,16 @@ private:
       for (size_t i=0; i!=C.Conversions.size(); i++){
         if (!C.Conversions[i].isInitialized())continue;
         if (C.Conversions[i].isBad()){
-          return toString(C.Conversions[i].Bad.Kind)+" Pos: "+std::to_string(i)+
+          return toString(C.Conversions[i].Bad.Kind)+" Pos: "+
+            std::to_string(i)+
             "    From: "+C.Conversions[i].Bad.getFromType().getAsString()+
             "    To: "+C.Conversions[i].Bad.getToType().getAsString();
         }
       }
       return {};
     case ovl_fail_bad_deduction:
-      return toString((Sema::TemplateDeductionResult)C.DeductionFailure.Result);
+      return toString(Sema::TemplateDeductionResult
+          (C.DeductionFailure.Result));
     case ovl_fail_trivial_conversion:
     case ovl_fail_illegal_constructor:
     case ovl_fail_bad_final_conversion:
@@ -707,8 +690,8 @@ private:
     case ovl_fail_bad_target:
       return {};
     case ovl_fail_enable_if:{
-        EnableIfAttr *Attr = static_cast<EnableIfAttr*>(C.DeductionFailure.Data);
-        return (std::string)Attr->getMessage();
+        return std::string(static_cast<EnableIfAttr*>
+            (C.DeductionFailure.Data)->getMessage());
       }
     case ovl_fail_explicit:
     case ovl_fail_addr_not_available:
@@ -741,7 +724,8 @@ private:
         act.path=conv.Standard.getFromType().getAsString();
         act.pathInfo=getConversionSeq(conv.Standard);
         if (C.Function && idx!=-1)
-          act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
+          act.path+=" -> "+
+            C.Function->parameters()[idx]->getType().getAsString();
         else
           act.path+=" -> "+conv.Standard.getToType(2).getAsString();
         break;
@@ -761,7 +745,8 @@ private:
             conv.UserDefined.After.Third) 
           act.path+=" -> "+conv.UserDefined.After.getFromType().getAsString();
         if (C.Function && idx!=-1)
-          act.path+=" -> "+C.Function->parameters()[idx]->getType().getAsString();
+          act.path+=" -> "+
+            C.Function->parameters()[idx]->getType().getAsString();
         else
           act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
         break;
@@ -784,10 +769,21 @@ private:
     return res;
   }
   OvdlCandEntry getCandEntry(const OverloadCandidate& C){
-    static std::unordered_map<OverloadCandidate, OvdlCandEntry,CandHash,CandEq> mp;
-    if (mp.find(C)!=mp.end()){
-      return mp[C];
+    static std::vector<std::pair<const NamedDecl*, OvdlCandEntry>> mp;
+    if (const NamedDecl* p = C.Function){
+      for (const auto& [key,val]:mp){
+        if (key==p || S->isEquivalentInternalLinkageDeclaration(key, p))
+          return val;
+      }
+      auto res=getCandEntryIner(C);
+      mp.push_back({p,res});
+      return res;
     }
+
+    auto res=getCandEntryIner(C);
+    return res;
+  }
+  OvdlCandEntry getCandEntryIner(const OverloadCandidate& C){
     OvdlCandEntry res;
     if (settings.ShowConversions)
       res.Conversions=getConversions(C);
@@ -804,7 +800,6 @@ private:
       } 
       res.declLocation="Surrogate ";
       res.declLocation+=C.Surrogate->getLocation().printToString(S->SourceMgr);
-      mp[C]=res;
       return res;
     }
 
@@ -815,10 +810,14 @@ private:
         if (tmp.getAsString()!="NULL TYPE")
           res.signature+=tmp.getAsString()+" ";
       }
-      mp[C]=res;
       return res;
     }
-    res.declLocation=C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
+    res.declLocation=
+      C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
+    if (const auto* p=dyn_cast<UsingShadowDecl>(C.FoundDecl.getDecl()))
+      res.declLocation+="  Using from "+
+        p->getTargetDecl()->getLocation().printToString(S->SourceMgr);
+    //if (C.FoundDecl.getDecl()->isUsing)
     //res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
     res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
@@ -834,7 +833,6 @@ private:
       llvm::errs()<<"\n"<<res.declLocation<<"\n";
       /*TODO can't reach??? */
     }
-    mp[C]=res;
     return res;
   }
   std::string getTemplate(const OverloadCandidate& C){
@@ -845,7 +843,9 @@ private:
     }
     const FunctionDecl* f=nd->getAsFunction();
     /*TODO if !f*/
-    if (!f)llvm::errs()<<C.FoundDecl->getLocation().printToString(S->SourceMgr)<<'\n';
+    if (!f) 
+      llvm::errs()<<C.FoundDecl->getLocation()
+        .printToString(S->SourceMgr)<<'\n';
     if (!f||!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
@@ -860,16 +860,18 @@ private:
     }
     if (l0>r.getEnd())
       r.setEnd(l0);
-    SourceLocation endloc(Lexer::getLocForEndOfToken(r.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
+    SourceLocation endloc(Lexer::getLocForEndOfToken
+        (r.getEnd(), 0,S->getSourceManager() , S->getLangOpts()));
     CharSourceRange range=CharSourceRange::getCharRange(r.getBegin(),endloc);
-    return std::string(Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+    return std::string(Lexer::getSourceText
+        (range, S->getSourceManager(), S->getLangOpts()));
   }
   std::string getSignature(const OverloadCandidate& C) const{
     //const FunctionDecl* f=C.Function;
     std::string res;
     if (!C.Function->param_empty()){
       res+=C.Function->parameters()[0]->getType().getAsString();
-      if (C.Function->parameters()[0]->hasDefaultArg()) res+="=def";
+      if (C.Function->parameters()[0]->hasDefaultArg()) res+="=default";
       for (const auto& x:llvm::drop_begin(C.Function->parameters())){
         res+=", ";
         res+=x->getType().getAsString();
@@ -878,7 +880,8 @@ private:
     }
     return res;
   }
-  OvdlResEntry getResEntry(OverloadingResult ovres, const OverloadCandidate* BestOrProblem){
+  OvdlResEntry getResEntry(OverloadingResult ovres,
+          const OverloadCandidate* BestOrProblem){
     isImplicit=false;
     OvdlResEntry res;
     res.ovRes=ovres;
@@ -887,14 +890,16 @@ private:
       res.problems={};
     }else if (ovres==clang::OR_Ambiguous){
       res.best={};
-      res.problems={getCandEntry(BestOrProblem[0]),getCandEntry(BestOrProblem[1])};
+      res.problems={getCandEntry(BestOrProblem[0]),
+                  getCandEntry(BestOrProblem[1])};
     }else{
       res.best={};
       if (BestOrProblem)
         res.problems={getCandEntry(*BestOrProblem)};
     }
     res.callLocation=Loc->printToString(S->SourceMgr);
-    SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,S->getSourceManager() , S->getLangOpts()));
+    SourceLocation endloc(Lexer::getLocForEndOfToken(*Loc, 0,
+          S->getSourceManager() , S->getLangOpts()));
     CharSourceRange range;
     ArrayRef<Expr*> Args=Set->getArgs();
     SourceLocation endloc02=Set->getEndLoc();
@@ -906,29 +911,34 @@ private:
     }
     if (Args.size()==1 && isa< clang::InitListExpr>(Args[0])){
       if (Args[0]->getEndLoc()>endloc02) {endloc02=Args[0]->getEndLoc();}
-      const clang::InitListExpr* p=llvm::dyn_cast<const clang::InitListExpr>(Args[0]);
-      Args=p->inits();
+      Args=llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
     }
     if (!Args.empty() && Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
       begloc=Args[0]->getBeginLoc();
     }
     if (!Args.empty()&& Args.back()!=0){
-      SourceLocation endloc1(Lexer::getLocForEndOfToken(Args.back()->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+      SourceLocation endloc1(Lexer::getLocForEndOfToken
+          (Args.back()->getEndLoc(), 0,
+           S->getSourceManager() , S->getLangOpts()));
       if (endloc<endloc1) endloc=endloc1;
     }
     if (endloc02!=SourceLocation()){
-      SourceLocation endloc2(Lexer::getLocForEndOfToken(endloc02, 0,S->getSourceManager() , S->getLangOpts()));
+      SourceLocation endloc2(Lexer::getLocForEndOfToken
+          (endloc02, 0,S->getSourceManager() , S->getLangOpts()));
       if (endloc<endloc2) endloc=endloc2;
     }
     range=CharSourceRange::getCharRange(begloc,endloc);
     if (Args.size()==1 && Args[0]->getBeginLoc()==begloc){
-      SourceLocation endloc2(Lexer::getLocForEndOfToken(Args[0]->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
+      SourceLocation endloc2(Lexer::getLocForEndOfToken
+          (Args[0]->getEndLoc(), 0,S->getSourceManager() , S->getLangOpts()));
       if (endloc==endloc2)
         isImplicit=true;
     }
-    res.callSignature=Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
+    res.callSignature=Lexer::getSourceText
+      (range, S->getSourceManager(), S->getLangOpts());
     if (Set->getObjectParamType()!=QualType()) {
-      res.callTypes.push_back("(Obj:"+Set->getObjectParamType().getAsString()+")");
+      res.callTypes.push_back("(Obj:"+
+          Set->getObjectParamType().getAsString()+")");
     }
     for (const auto& x:Args){
       if (x==0) {res.callTypes.push_back("NULL"); continue;}

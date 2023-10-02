@@ -10487,6 +10487,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // Make sure that this function is better than every other viable
   // function. If not, we have an ambiguity.
+  OverloadCandidate AmbiguotyReasons[2];
   while (!PendingBest.empty()) {
     auto *Curr = PendingBest.pop_back_val();
     for (auto *Cand : Candidates) {
@@ -10500,8 +10501,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
           Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	      }else{
-          OverloadCandidate reasons[2]{*Best,*Cand};
-          atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Ambiguous,reasons);
+          AmbiguotyReasons[0]=*Curr;
+          AmbiguotyReasons[1]=*Cand;
           Best = end();
         }
       }
@@ -10510,6 +10511,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // If we found more than one best candidate, this is ambiguous.
   if (Best == end()){
+    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Ambiguous,AmbiguotyReasons);
     return OR_Ambiguous;
   }
   // Best is the best viable function.
