@@ -15,6 +15,7 @@
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/DebugInfo/BTF/BTF.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -22,8 +23,10 @@
 #include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <numeric>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -707,9 +710,9 @@ private:
   }
   std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C){
     std::vector<OvdlConvEntry> res;
-    const auto fromTypes=getSignatureTypes(C);
+    //const auto fromTypes=getSignatureTypes(C);
     for (size_t i=0; i<C.Conversions.size();++i){
-      const QualType* fromType=fromTypes.empty()? nullptr: &fromTypes[i].first;
+      //const QualType* fromType=fromTypes.empty()? nullptr: &fromTypes[i].first;
       const auto& conv=C.Conversions[i];
       int idx=i;
       if (C.Function && isa<CXXMethodDecl>(C.Function) && 
@@ -724,8 +727,8 @@ private:
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
         act.kind="Standard";
-        act.path=fromType?fromType->getAsString()
-          :conv.Standard.getFromType().getAsString();
+        act.path=//fromType?fromType->getAsString():
+          conv.Standard.getFromType().getAsString();
         act.pathInfo=getConversionSeq(conv.Standard);
         if (C.Function && idx!=-1)
           act.path +=
@@ -738,8 +741,8 @@ private:
         break;
       case ImplicitConversionSequence::UserDefinedConversion:
         act.kind="UserDefined";
-        act.path=fromType?fromType->getAsString()
-          :conv.UserDefined.Before.getFromType().getAsString();
+        act.path=//fromType?fromType->getAsString():
+          conv.UserDefined.Before.getFromType().getAsString();
         if (conv.UserDefined.Before.First || 
             conv.UserDefined.Before.Second || 
             conv.UserDefined.Before.Third) 
@@ -936,7 +939,7 @@ private:
       Args={};
     }
     if (Args.size()==1&&isa<clang::InitListExpr>(Args[0])){
-      //Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
+      Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
     }
     return res;
   }
@@ -971,8 +974,8 @@ private:
     }
     if (Args.size()==1 && isa<clang::InitListExpr>(Args[0])){
       if (Args[0]->getEndLoc()>endloc02) {endloc02=Args[0]->getEndLoc();}
-      Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
-      res.callTypes.push_back("IL");
+      //Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
+      //res.callTypes.push_back("IL");
     }
     if (!Args.empty() && Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
       begloc=Args[0]->getBeginLoc();
@@ -1003,10 +1006,20 @@ private:
     }
     for (const auto& x:Args){
       if (x==nullptr) {res.callTypes.push_back("NULL"); continue;}
-      if (isa<clang::InitListExpr>(x)){
+      if (auto* y=dyn_cast<clang::InitListExpr>(x)){
         res.callTypes.push_back("InitizerList");
+        /*if (!y->inits().empty()){
+          y->children();
+          QualType commonType=std::accumulate
+            (y->inits().begin(), y->inits().end(), (*y->inits().begin())->getType(),
+              [=](const QualType& x,Expr* y){
+                return S->getASTContext().getCommonSugaredType(x,y->getType(),1);
+              }
+            );
+          res.callTypes.back()+=" of "+commonType.getAsString();
+        }*/
       }
-      if (isa<CXXBoolLiteralExpr, CXXNullPtrLiteralExpr, CharacterLiteral,
+      else if (isa<CXXBoolLiteralExpr, CXXNullPtrLiteralExpr, CharacterLiteral,
           CompoundLiteralExpr, FixedPointLiteral, FloatingLiteral,
           ImaginaryLiteral, IntegerLiteral, ObjCArrayLiteral,
           ObjCBoolLiteralExpr, ObjCDictionaryLiteral, ObjCStringLiteral,
