@@ -1054,7 +1054,7 @@ class Sema;
     SourceLocation Loc;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
-    llvm::SmallVector<Expr*> Args;//Make an owning structure. (Cope the data too???)
+    llvm::SmallVector<Expr*> Args;
     QualType ObjectParamType;
     SourceLocation EndLoc;
     
@@ -1112,6 +1112,7 @@ class Sema;
 
     SourceLocation getLocation() const { return Loc; }
     ArrayRef<Expr*> getArgs()const{return Args;}
+    void setArgs(const ArrayRef<Expr*> args){Args=llvm::SmallVector<Expr*>(args);}
     CandidateSetKind getKind() const { return Kind; }
     OperatorRewriteInfo getRewriteInfo() const { return RewriteInfo; }
 

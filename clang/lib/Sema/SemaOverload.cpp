@@ -10501,9 +10501,9 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
           Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	      }else{
-          AmbiguotyReasons[0]=*Curr;
-          AmbiguotyReasons[1]=*Cand;
-          Best = end();
+                AmbiguotyReasons[0] = *Curr;
+                AmbiguotyReasons[1] = *Cand;
+                Best = end();
         }
       }
     }
@@ -10511,7 +10511,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // If we found more than one best candidate, this is ambiguous.
   if (Best == end()){
-    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Ambiguous,AmbiguotyReasons);
+    atOverloadEnd(S.OverloadCallbacks, S, Loc, *this, OR_Ambiguous,
+                  AmbiguotyReasons);
     return OR_Ambiguous;
   }
   // Best is the best viable function.
