@@ -1055,7 +1055,7 @@ class Sema;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
     llvm::SmallVector<Expr*> Args;
-    QualType ObjectParamType;
+    Expr* ObjectExpr=nullptr;
     SourceLocation EndLoc;
     
 
@@ -1096,10 +1096,10 @@ class Sema;
     void destroyCandidates();
 
   public:
-    const QualType& getObjectParamType()const{return ObjectParamType;}
+    const Expr* getObjectExpr()const{return ObjectExpr;}
     const SourceLocation& getEndLoc()const{return EndLoc;}
     void setEndLoc(const SourceLocation& El){EndLoc=El;}
-    void setBaseType(const QualType& Ty){ObjectParamType=Ty;}
+    void setObjectExpr(Expr* E){ObjectExpr=E;}
     OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
                          ArrayRef<Expr*> Args, const SourceLocation EndLoc={}, OperatorRewriteInfo RewriteInfo = {})
         : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args),EndLoc(EndLoc){}

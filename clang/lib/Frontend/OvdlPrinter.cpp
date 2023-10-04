@@ -4,6 +4,7 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -511,19 +512,20 @@ void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
 }
 using CompareKind = clang::ImplicitConversionSequence::CompareKind;
 std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
-    const OverloadCandidate& Cand2,int idx,CompareKind res){
+    const OverloadCandidate& Cand2,int idx,CompareKind res,ExprValueKind vk){
   const static  std::string compareSigns[3]{">","=","<"};
+  static constexpr const char* Kinds[3]{"-PRvalue","-Lvalue","-Xvalue"};
   return "(" +
-         getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() +
-         " -> " + getToType(Cand1, idx).getCanonicalType().getAsString() +
+         getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() + 
+         Kinds[vk] + " -> " + getToType(Cand1, idx).getCanonicalType().getAsString() +
          ")\t" + compareSigns[res + 1] + "\t(" +
          getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() +
-         " -> " + getToType(Cand2, idx).getCanonicalType().getAsString() + ")";
+         Kinds[vk] + " -> " + getToType(Cand2, idx).getCanonicalType().getAsString() + ")";
 }
 
 class DefaultOverloadInstCallback:public OverloadCallback{
   const Sema* S=nullptr;
-  bool inBestOC=0,isImplicit;
+  bool inBestOC=false,isImplicit;
   const OverloadCandidateSet* Set=nullptr;
   const SourceLocation* Loc=nullptr;
   std::vector<OvdlCompareEntry> compares;
@@ -562,7 +564,7 @@ public:
       compares = {};
       return;
     }
-    inBestOC = 1;
+    inBestOC = true;
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
         const OverloadCandidateSet& set, OverloadingResult ovRes, 
@@ -576,7 +578,7 @@ public:
         (node.line > settings.LineTo && settings.LineTo>0) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares={};
-      inBestOC=0;
+      inBestOC=false;
       return;
     }
     node.Entry=getResEntry(ovRes,BestOrProblem);
@@ -586,7 +588,7 @@ public:
     compares={};
     if (!isImplicit || settings.ShowImplicitConversions)
       cont.add(node);
-    inBestOC=0;
+    inBestOC=false;
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
                                       const OverloadCandidate &C1,
@@ -614,9 +616,10 @@ public:
       if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
     }
     Entry.reason=toString(reason);
+    const auto callKinds=getCallKinds();
     if (reason==clang::betterConversion){
       std::string message=ConversionCompareAsString(Cand1,Cand2,infoIdx,
-          res?CompareKind::Better:CompareKind::Worse);
+          res?CompareKind::Better:CompareKind::Worse,callKinds[infoIdx]);
       message+="    Place: "+std::to_string(infoIdx+1);
       Entry.deciderConversion=message;
     }else if (reason==clang::badConversion){
@@ -625,16 +628,9 @@ public:
         getToType((res?Cand2:Cand1),infoIdx).getAsString();
       Entry.deciderConversion=message+" is ill formated";
     }
-    auto Args=Set->getArgs();
-    if (Args.size() == 1 && Args[0]==nullptr){
-      Args={};
-    }
-    if (Args.size()==1 && isa< clang::InitListExpr>(Args[0])){
-      Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
-    }
     for (size_t i=0; i!= compareResults.size(); ++i){
       Entry.conversionCompares.push_back(ConversionCompareAsString(
-            Cand1,Cand2,i,compareResults[i]));
+            Cand1,Cand2,i,compareResults[i],callKinds[i]));
     }
     for (auto &E : compares) { // Removeing mirrors
       if (E.C1==Entry.C2 && E.C2==Entry.C1){ 
@@ -647,7 +643,6 @@ public:
       }
     }
     compares.push_back(Entry);
-    Set;
   }
 
 private:
@@ -656,7 +651,7 @@ private:
     if (relevants.empty() && Entry.best)
       relevants.push_back(*Entry.best);
     for (size_t i=0; i<Entry.compares.size();++i){
-      bool isRelevant=0;
+      bool isRelevant=false;
       for (const auto& relevant:relevants){
         isRelevant=isRelevant||Entry.compares[i].C1 == relevant;
         isRelevant=isRelevant||Entry.compares[i].C2 == relevant;
@@ -710,9 +705,10 @@ private:
   }
   std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C){
     std::vector<OvdlConvEntry> res;
-    //const auto fromTypes=getSignatureTypes(C);
+    const auto callKinds=getCallKinds();
+    static constexpr const char* Kinds[3]{"-PRvalue","-Lvalue","-Xvalue"};
     for (size_t i=0; i<C.Conversions.size();++i){
-      //const QualType* fromType=fromTypes.empty()? nullptr: &fromTypes[i].first;
+      const ExprValueKind fromKind=callKinds[i];
       const auto& conv=C.Conversions[i];
       int idx=i;
       if (C.Function && isa<CXXMethodDecl>(C.Function) && 
@@ -727,49 +723,56 @@ private:
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
         act.kind="Standard";
-        act.path=//fromType?fromType->getAsString():
-          conv.Standard.getFromType().getAsString();
+        //conv.Standard.getFromType().getAsString();
+        act.path=conv.Standard.getFromType().getCanonicalType().getAsString();
+        act.path+=Kinds[fromKind];
+        //if (isFromBindsToRvalue(conv))
+        //  act.path+="(&&) ";
         act.pathInfo=getConversionSeq(conv.Standard);
         if (C.Function && idx!=-1)
           act.path +=
-              " -> " + C.Function->parameters()[idx]->getType().getAsString();
+              " -> " + C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
-          act.path+=" -> "+conv.Standard.getToType(2).getAsString();
+          act.path+=" -> "+conv.Standard.getToType(2).getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         act.kind="StaticObjectConversion";
         break;
       case ImplicitConversionSequence::UserDefinedConversion:
         act.kind="UserDefined";
-        act.path=//fromType?fromType->getAsString():
-          conv.UserDefined.Before.getFromType().getAsString();
+        act.path=conv.UserDefined.Before.getFromType().getCanonicalType().getAsString();
+        act.path+=Kinds[fromKind];
+        //if (isFromBindsToRvalue(conv))
+        //  act.path+="(&&) ";
         if (conv.UserDefined.Before.First || 
             conv.UserDefined.Before.Second || 
             conv.UserDefined.Before.Third) 
-          act.path+=" -> "+conv.UserDefined.Before.getToType(2).getAsString();
+          act.path+=" -> "+conv.UserDefined.Before.getToType(2).getCanonicalType().getAsString();
         act.pathInfo=getConversionSeq(conv.UserDefined);
         if (conv.UserDefined.After.First || 
             conv.UserDefined.After.Second || 
             conv.UserDefined.After.Third) 
-          act.path+=" -> "+conv.UserDefined.After.getFromType().getAsString();
+          act.path+=" -> "+conv.UserDefined.After.getFromType().getCanonicalType().getAsString();
         if (C.Function && idx!=-1)
           act.path +=
-              " -> " + C.Function->parameters()[idx]->getType().getAsString();
+              " -> " + C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
-          act.path+=" -> "+conv.UserDefined.After.getToType(2).getAsString();
+          act.path+=" -> "+conv.UserDefined.After.getToType(2).getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
         act.kind="Ambigious";
-        act.path=conv.Ambiguous.getFromType().getAsString();
-        act.path+=" -> "+conv.Ambiguous.getToType().getAsString();
+        act.path=conv.Ambiguous.getFromType().getCanonicalType().getAsString();
+        act.path+=Kinds[fromKind];
+        act.path+=" -> "+conv.Ambiguous.getToType().getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::EllipsisConversion:
         act.kind="Ellipsis";
         break;
       case ImplicitConversionSequence::BadConversion:
         act.kind="Bad: "+toString(conv.Bad.Kind);
-        act.path=conv.Bad.getFromType().getAsString();
-        act.path+=" -> "+conv.Bad.getToType().getAsString();
+        act.path=conv.Bad.getFromType().getCanonicalType().getAsString();
+        act.path+=Kinds[fromKind];
+        act.path+=" -> "+conv.Bad.getToType().getCanonicalType().getAsString();
         break;
       }
     }
@@ -831,10 +834,10 @@ private:
     // res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
     res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
-      if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
+      /*if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
         if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
           res.signature=mp->getThisObjectType().getAsString()+"; ";
-      }
+      }*/
       res.signature+=getSignature(C);
       res.templateSource=getTemplate(C);
       //res.nameSignature+=" - "+getSignature(*C.Function);
@@ -929,18 +932,22 @@ private:
     }*/
     return res;
   }
-  std::vector<QualType> getCallTypes()const{
-    std::vector<QualType> res;
-    if (Set->getObjectParamType()!=QualType{}){
-      res.push_back(Set->getObjectParamType());
+  std::vector<ExprValueKind> getCallKinds()const{
+    std::vector<ExprValueKind> res;
+    if (const Expr* Oe=Set->getObjectExpr()){
+      res.push_back(Oe->getValueKind());
     }
     auto Args=Set->getArgs();
     if (Args.size()==1&&Args[0]==nullptr){
       Args={};
     }
-    if (Args.size()==1&&isa<clang::InitListExpr>(Args[0])){
+    /*if (Args.size()==1&&isa<clang::InitListExpr>(Args[0])){
       Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
+    }*/
+    for (const auto *Arg:Args){
+      res.push_back(Arg->getValueKind());
     }
+
     return res;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres,
@@ -1000,9 +1007,9 @@ private:
     }
     res.callSignature =
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
-    if (Set->getObjectParamType()!=QualType()) {
+    if (const Expr* Oe=Set->getObjectExpr()) {
       res.callTypes.push_back(
-          "(Obj:" + Set->getObjectParamType().getAsString() + ")");
+          "(Obj:" + Oe->getType().getAsString() + ")");
     }
     for (const auto& x:Args){
       if (x==nullptr) {res.callTypes.push_back("NULL"); continue;}

@@ -14846,7 +14846,8 @@ ExprResult Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
       CandidateSet.setObjectParamRange(UnresExpr->getBase()->getSourceRange());
     }*/
     if (1)
-      CandidateSet.setBaseType(ObjectType);
+      CandidateSet.setObjectExpr(UnresExpr);
+      //CandidateSet.setBaseType(ObjectType);
 
 
     // FIXME: avoid copy.
@@ -15067,7 +15068,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   OverloadCandidateSet CandidateSet(LParenLoc,
                                     OverloadCandidateSet::CSK_Operator,Args,RParenLoc);
   if (1)//Ovdl On?
-    CandidateSet.setBaseType(Obj->getType());
+    CandidateSet.setObjectExpr(Obj);
   DeclarationName OpName = Context.DeclarationNames.getCXXOperatorName(OO_Call);
 
   if (RequireCompleteType(LParenLoc, Object.get()->getType(),
