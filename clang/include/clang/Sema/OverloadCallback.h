@@ -26,7 +26,7 @@ public:
     const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)=0;
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
     const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason,int infoIdx)=0;
-}; 
+};
 template <class OverloadCallbackPtrs>
 void atOverloadBegin(OverloadCallbackPtrs &Callbacks,
                      const Sema &TheSema,
@@ -39,12 +39,9 @@ void atOverloadBegin(OverloadCallbackPtrs &Callbacks,
 }
 
 template <class OverloadCallbackPtrs>
-void atOverloadEnd(OverloadCallbackPtrs &Callbacks,
-                   const Sema &TheSema,
-                   const SourceLocation Loc,
-    const OverloadCandidateSet& Set, 
-    OverloadingResult Res, 
-    const OverloadCandidate* BestOrProblem) {
+void atOverloadEnd(OverloadCallbackPtrs &Callbacks, const Sema &TheSema,
+                   const SourceLocation Loc, const OverloadCandidateSet& Set,
+                    OverloadingResult Res, const OverloadCandidate* BestOrProblem) {
   for (auto &C : Callbacks) {
     if (C)
       C->atOverloadEnd(TheSema, Loc, Set,Res,BestOrProblem);

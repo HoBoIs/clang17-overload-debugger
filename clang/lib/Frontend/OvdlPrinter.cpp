@@ -16,13 +16,14 @@
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo/BTF/BTF.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/YAMLTraits.h"
+#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
-#include <iostream>
 #include <iterator>
 #include <numeric>
 #include <optional>
@@ -57,7 +58,6 @@ struct OvdlConvEntry{
   bool operator==(const OvdlConvEntry& o) const{
     return path==o.path && pathInfo == o.pathInfo && kind==o.kind;
   }
-  
 };
 struct OvdlCandEntry{
   std::string declLocation;
@@ -206,12 +206,12 @@ template <> struct MappingTraits<OvdlCandEntry>{
 };
 template <>
 struct SequenceTraits<std::deque<std::string>> {
-  static size_t size(IO &io, std::deque<std::string> &list) { 
-    return list.size(); 
+  static size_t size(IO &io, std::deque<std::string> &list) {
+    return list.size();
   }
   static std::string &element(IO &io, std::deque<std::string> &list,
-      size_t index) { 
-    return list[index]; 
+      size_t index) {
+    return list[index];
   }
   static const bool flow = true;
 };
@@ -398,55 +398,56 @@ std::string toString(BetterOverloadCandidateReason r){
 };
 std::string getConversionSeq(const StandardConversionSequence &cs) {
   std::string res;
+  llvm::raw_string_ostream os(res);
   bool PrintedSomething = false;
   if (cs.First != ICK_Identity) {
-    res += toString(cs.First);
+    os << toString(cs.First);
     PrintedSomething = true;
   }
 
   if (cs.Second != ICK_Identity) {
     if (PrintedSomething) {
-      res += " -> ";
+      os << " -> ";
     }
-    res += toString(cs.Second);
+    os << toString(cs.Second);
 
     if (cs.CopyConstructor) {
-      res += " (by copy constructor)";
+      os << " (by copy constructor)";
     } else if (cs.DirectBinding) {
-      res += " (direct reference binding)";
+      os << " (direct reference binding)";
     } else if (cs.ReferenceBinding) {
-      res += " (reference binding)";
+      os << " (reference binding)";
     }
     PrintedSomething = true;
   }
 
   if (cs.Third != ICK_Identity) {
     if (PrintedSomething) {
-      res += " -> ";
+      os << " -> ";
     }
-    res += toString(cs.Third);
+    os << toString(cs.Third);
     PrintedSomething = true;
   }
 
   if (!PrintedSomething) {
-    res += "No conversions required";
+    os << "No conversions required";
   }
   return res;
 }
 std::string getConversionSeq(const UserDefinedConversionSequence &cs) {
   std::string res;
+  llvm::raw_string_ostream os(res);
   if (cs.Before.First || cs.Before.Second || cs.Before.Third) {
-    res += getConversionSeq(cs.Before);
-    res += " -> ";
+    os << getConversionSeq(cs.Before);
+    os << " -> ";
   }
   if (cs.ConversionFunction) {
-    // res+= cs.ConversionFunction->getNameAsString();
-    res += cs.ConversionFunction->getQualifiedNameAsString();
+    os << cs.ConversionFunction->getQualifiedNameAsString();
   } else
-    res += "aggregate initialization";
+    os << "aggregate initialization";
   if (cs.After.First || cs.After.Second || cs.After.Third) {
-    res += " -> ";
-    res += getConversionSeq(cs.After);
+    os << " -> ";
+    os << getConversionSeq(cs.After);
   }
   return res;
 }
@@ -491,12 +492,12 @@ const QualType getToType(const ImplicitConversionSequence& C){
 QualType getToType(const OverloadCandidate& C,int idx){
   if (C.Function==nullptr)
     return getToType(C.Conversions[idx]);
-  if (isa<CXXMethodDecl>(C.Function) && 
+  if (isa<CXXMethodDecl>(C.Function) &&
       !isa<CXXConstructorDecl>(C.Function))
     --idx;
   if (idx==-1){
     return getToType(C.Conversions[0]);//TODO:thistype
-    //return llvm::dyn_cast<CXXMethodDecl>(C.Function)->getThisObjectType();
+    //return llvm::dyn_cast<CXXMethodDecl>(C.Function)->getThisType();
   }
   return C.Function->parameters()[idx]->getType();
 }
@@ -510,20 +511,9 @@ void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
   }
   Out<<"---"<<YAML<<"\n";
 }
-using CompareKind = clang::ImplicitConversionSequence::CompareKind;
-std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
-    const OverloadCandidate& Cand2,int idx,CompareKind res,ExprValueKind vk){
-  const static  std::string compareSigns[3]{">","=","<"};
-  static constexpr const char* Kinds[3]{"-PRvalue","-Lvalue","-Xvalue"};
-  return "(" +
-         getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() + 
-         Kinds[vk] + " -> " + getToType(Cand1, idx).getCanonicalType().getAsString() +
-         ")\t" + compareSigns[res + 1] + "\t(" +
-         getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() +
-         Kinds[vk] + " -> " + getToType(Cand2, idx).getCanonicalType().getAsString() + ")";
-}
-
 class DefaultOverloadInstCallback:public OverloadCallback{
+  using CompareKind = clang::ImplicitConversionSequence::CompareKind;
+  static constexpr llvm::StringLiteral Kinds[]={"[temporary]","","&&"};
   const Sema* S=nullptr;
   bool inBestOC=false,isImplicit;
   const OverloadCandidateSet* Set=nullptr;
@@ -534,11 +524,11 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   std::vector<CompareKind> compareResults;
 public:
   virtual bool needAllCompareInfo() const override{
-    return settings.ShowConversions==clang::FrontendOptions::SC_Verbose && 
+    return settings.ShowConversions==clang::FrontendOptions::SC_Verbose &&
       inBestOC && settings.ShowCompares;
   };
   virtual void setCompareInfo(const std::vector<CompareKind>& c)override{
-    if (needAllCompareInfo()) 
+    if (needAllCompareInfo())
       compareResults=c;
   };
   void setSettings(const clang::FrontendOptions::OvdlSettingsC &s) {
@@ -558,7 +548,7 @@ public:
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        line < settings.LineFrom || 
+        line < settings.LineFrom ||
         (line > settings.LineTo && settings.LineTo>0) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares = {};
@@ -567,14 +557,14 @@ public:
     inBestOC = true;
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
-        const OverloadCandidateSet& set, OverloadingResult ovRes, 
+        const OverloadCandidateSet& set, OverloadingResult ovRes,
         const OverloadCandidate* BestOrProblem) override{
     OvdlResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
     node.Fname=L.getFilename();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        node.line < settings.LineFrom || 
+        node.line < settings.LineFrom ||
         (node.line > settings.LineTo && settings.LineTo>0) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares={};
@@ -582,10 +572,10 @@ public:
       return;
     }
     node.Entry=getResEntry(ovRes,BestOrProblem);
-    if (!settings.ShowAllCompares)
-      filterForRelevant(node.Entry);
     node.Entry.compares=std::move(compares);
     compares={};
+    if (!settings.ShowAllCompares)
+      filterForRelevant(node.Entry);
     if (!isImplicit || settings.ShowImplicitConversions)
       cont.add(node);
     inBestOC=false;
@@ -618,22 +608,20 @@ public:
     Entry.reason=toString(reason);
     const auto callKinds=getCallKinds();
     if (reason==clang::betterConversion){
-      std::string message=ConversionCompareAsString(Cand1,Cand2,infoIdx,
-          res?CompareKind::Better:CompareKind::Worse,callKinds[infoIdx]);
-      message+="    Place: "+std::to_string(infoIdx+1);
-      Entry.deciderConversion=message;
+      Entry.deciderConversion = ConversionCompareAsString(Cand1,Cand2,infoIdx,
+        res?CompareKind::Better:CompareKind::Worse,callKinds[infoIdx]) +
+        "    Place: "+std::to_string(infoIdx+1);
     }else if (reason==clang::badConversion){
-      std::string message=
+      Entry.deciderConversion =
         getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
-        getToType((res?Cand2:Cand1),infoIdx).getAsString();
-      Entry.deciderConversion=message+" is ill formated";
+        getToType((res?Cand2:Cand1),infoIdx).getAsString()+" is ill formated";
     }
     for (size_t i=0; i!= compareResults.size(); ++i){
       Entry.conversionCompares.push_back(ConversionCompareAsString(
             Cand1,Cand2,i,compareResults[i],callKinds[i]));
     }
     for (auto &E : compares) { // Removeing mirrors
-      if (E.C1==Entry.C2 && E.C2==Entry.C1){ 
+      if (E.C1==Entry.C2 && E.C2==Entry.C1){
         if (!E.C1Better && Entry.C1Better){
           E=Entry;//Keep the one where C1 is better
           return;
@@ -644,12 +632,24 @@ public:
     }
     compares.push_back(Entry);
   }
-
 private:
+  std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
+      const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,ExprValueKind vk){
+    const static  llvm::StringLiteral compareSigns[]{">","=","<"};
+    std::string res;
+    llvm::raw_string_ostream os(res);
+    os<< "(" << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
+        Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString() <<
+        ")\t" << compareSigns[cmpRes + 1] << "\t(" <<
+        getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() <<
+        Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ")";
+    return res;
+  }
   void filterForRelevant(OvdlResEntry& Entry){
     std::vector<OvdlCandEntry> relevants=Entry.problems;
-    if (relevants.empty() && Entry.best)
+    if (relevants.empty() && Entry.best){
       relevants.push_back(*Entry.best);
+    }
     for (size_t i=0; i<Entry.compares.size();++i){
       bool isRelevant=false;
       for (const auto& relevant:relevants){
@@ -673,10 +673,14 @@ private:
       for (size_t i=0; i!=C.Conversions.size(); i++){
         if (!C.Conversions[i].isInitialized())continue;
         if (C.Conversions[i].isBad()){
-          return toString(C.Conversions[i].Bad.Kind) +
-                 " Pos: " + std::to_string(i) + "    From: " +
-                 C.Conversions[i].Bad.getFromType().getAsString() +
-                 "    To: " + C.Conversions[i].Bad.getToType().getAsString();
+          std::string res;
+          llvm::raw_string_ostream os(res);
+          os << toString(C.Conversions[i].Bad.Kind) <<
+                 " Pos: " <<  std::to_string(i) <<  "    From: " <<
+                 C.Conversions[i].Bad.getFromType().getAsString() <<
+                 Kinds[getCallKinds()[i]] << "    To: " <<
+                 C.Conversions[i].Bad.getToType().getAsString();
+          return res;
         }
       }
       return {};
@@ -706,12 +710,11 @@ private:
   std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C){
     std::vector<OvdlConvEntry> res;
     const auto callKinds=getCallKinds();
-    static constexpr const char* Kinds[3]{"-PRvalue","-Lvalue","-Xvalue"};
     for (size_t i=0; i<C.Conversions.size();++i){
       const ExprValueKind fromKind=callKinds[i];
       const auto& conv=C.Conversions[i];
       int idx=i;
-      if (C.Function && isa<CXXMethodDecl>(C.Function) && 
+      if (C.Function && isa<CXXMethodDecl>(C.Function) &&
           !isa<CXXConstructorDecl>(C.Function))
         --idx;
       res.push_back({});
@@ -720,59 +723,54 @@ private:
         act.kind="Not initialized";
         continue;
       }
+      llvm::raw_string_ostream path(act.path);
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
         act.kind="Standard";
         //conv.Standard.getFromType().getAsString();
-        act.path=conv.Standard.getFromType().getCanonicalType().getAsString();
-        act.path+=Kinds[fromKind];
-        //if (isFromBindsToRvalue(conv))
-        //  act.path+="(&&) ";
+        path<<conv.Standard.getFromType().getCanonicalType().getAsString();
+        path<<Kinds[fromKind];
         act.pathInfo=getConversionSeq(conv.Standard);
-        if (C.Function && idx!=-1)
-          act.path +=
-              " -> " + C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
+        if (C.Function && idx!=-1  && !isa<clang::InitListExpr>(Set->getArgs()[idx]))
+          path  << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
-          act.path+=" -> "+conv.Standard.getToType(2).getCanonicalType().getAsString();
+          path << " -> " << conv.Standard.getToType(2).getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         act.kind="StaticObjectConversion";
         break;
       case ImplicitConversionSequence::UserDefinedConversion:
         act.kind="UserDefined";
-        act.path=conv.UserDefined.Before.getFromType().getCanonicalType().getAsString();
-        act.path+=Kinds[fromKind];
-        //if (isFromBindsToRvalue(conv))
-        //  act.path+="(&&) ";
-        if (conv.UserDefined.Before.First || 
-            conv.UserDefined.Before.Second || 
-            conv.UserDefined.Before.Third) 
-          act.path+=" -> "+conv.UserDefined.Before.getToType(2).getCanonicalType().getAsString();
+        path << conv.UserDefined.Before.getFromType().getCanonicalType().getAsString();
+        path << Kinds[fromKind];
+        if (conv.UserDefined.Before.First ||
+            conv.UserDefined.Before.Second ||
+            conv.UserDefined.Before.Third)
+          path << " -> " << conv.UserDefined.Before.getToType(2).getCanonicalType().getAsString();
         act.pathInfo=getConversionSeq(conv.UserDefined);
-        if (conv.UserDefined.After.First || 
-            conv.UserDefined.After.Second || 
-            conv.UserDefined.After.Third) 
-          act.path+=" -> "+conv.UserDefined.After.getFromType().getCanonicalType().getAsString();
-        if (C.Function && idx!=-1)
-          act.path +=
-              " -> " + C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
+        if (conv.UserDefined.After.First ||
+            conv.UserDefined.After.Second ||
+            conv.UserDefined.After.Third)
+          path << " -> " << conv.UserDefined.After.getFromType().getCanonicalType().getAsString();
+        if (C.Function && idx!=-1&& !isa<clang::InitListExpr>(Set->getArgs()[idx]))
+          path << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
-          act.path+=" -> "+conv.UserDefined.After.getToType(2).getCanonicalType().getAsString();
+          path << " -> " << conv.UserDefined.After.getToType(2).getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
         act.kind="Ambigious";
-        act.path=conv.Ambiguous.getFromType().getCanonicalType().getAsString();
-        act.path+=Kinds[fromKind];
-        act.path+=" -> "+conv.Ambiguous.getToType().getCanonicalType().getAsString();
+        path << conv.Ambiguous.getFromType().getCanonicalType().getAsString();
+        path << Kinds[fromKind];
+        path << " -> " << conv.Ambiguous.getToType().getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::EllipsisConversion:
         act.kind="Ellipsis";
         break;
       case ImplicitConversionSequence::BadConversion:
         act.kind="Bad: "+toString(conv.Bad.Kind);
-        act.path=conv.Bad.getFromType().getCanonicalType().getAsString();
-        act.path+=Kinds[fromKind];
-        act.path+=" -> "+conv.Bad.getToType().getCanonicalType().getAsString();
+        path << conv.Bad.getFromType().getCanonicalType().getAsString();
+        path << Kinds[fromKind];
+        path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString();
         break;
       }
     }
@@ -805,46 +803,42 @@ private:
     else
       res.failKind={};
     res.extraFailInfo=getExtraFailInfo(C);
+    llvm::raw_string_ostream signature(res.signature);
     if (C.IsSurrogate){
       if (C.FoundDecl.getDecl()!=0){
         res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
-      } 
-      res.declLocation="Surrogate ";
-      res.declLocation +=
-          C.Surrogate->getLocation().printToString(S->SourceMgr);
+      }
+      res.declLocation = "Surrogate " + C.Surrogate->getLocation().printToString(S->SourceMgr);
+      signature<<C.Surrogate->getNameAsString();
       return res;
     }
 
     if (C.FoundDecl.getDecl()==0) {
       res.declLocation="Built-in";
+      res.name="";
+      if (C.FoundDecl!=nullptr){
+        res.name=C.FoundDecl->getNameAsString();
+      }
       //res.builtIn=1;
       for (const auto& tmp:C.BuiltinParamTypes){
-        if (tmp.getAsString()!="NULL TYPE")
-          res.signature+=tmp.getAsString()+" ";
+        if (tmp != QualType{})
+          signature << tmp.getAsString() << " ";
       }
       return res;
     }
-    res.declLocation =
-        C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
+    res.declLocation = C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
     if (const auto *p = dyn_cast<UsingShadowDecl>(C.FoundDecl.getDecl()))
       res.declLocation +=
           "  Using from " +
           p->getTargetDecl()->getLocation().printToString(S->SourceMgr);
-    // if (C.FoundDecl.getDecl()->isUsing)
-    // res.signature=C->FoundDecl.dumpSignature(0);//.getDecl();//->getType();
     res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
       /*if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
         if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
           res.signature=mp->getThisObjectType().getAsString()+"; ";
       }*/
-      res.signature+=getSignature(C);
+      signature<<getSignature(C);
       res.templateSource=getTemplate(C);
-      //res.nameSignature+=" - "+getSignature(*C.Function);
-    }else{
-      llvm::errs()<<"\n"<<res.name<<"";
-      llvm::errs()<<"\n"<<res.declLocation<<"\n";
-      /*TODO can't reach??? */
     }
     return res;
   }
@@ -852,7 +846,6 @@ private:
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-      //llvm::errs()<<"X";
     }
     const FunctionDecl* f=nd->getAsFunction();
     /*TODO if !f*/
@@ -881,8 +874,8 @@ private:
   }
   QualType getThisType(const OverloadCandidate& C)const{
     if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
-      if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp)) 
-        return mp->getThisObjectType();
+      if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
+        return mp->getThisType();
     }
     return QualType{};
   }
@@ -904,32 +897,22 @@ private:
   std::string getSignature(const OverloadCandidate& C) const{
     //const FunctionDecl* f=C.Function;
     std::string res;
+    llvm::raw_string_ostream os(res);
     const auto types=getSignatureTypes(C);
     size_t i=0;
     if (getThisType(C)!=QualType{}){
-      res+=getThisType(C).getCanonicalType().getAsString()+"=*this";
-      if (types.size()>1) res+=", ";
+      os<<getThisType(C).getCanonicalType().getAsString()<<"=this";
+      if (types.size()>1) os << ", ";
       ++i;
     }
     for (; i+1<types.size();i++){
       const auto&[type,isDefaulted]=types[i];
-      res+=type.getCanonicalType().getAsString()+(isDefaulted?"=default":"")+" ,";
+      os<<type.getCanonicalType().getAsString()<<(isDefaulted?"=default":"")<<", ";
     }
     if (i+1==types.size()) {//non-empty
       const auto&[type,isDefaulted]=types[i];
-      res+=type.getCanonicalType().getAsString()+(isDefaulted?"=default":"");
+      os<<type.getCanonicalType().getAsString()<<(isDefaulted?"=default":"");
     }
-    /*
-    if (!C.Function->param_empty()){
-      res+=C.Function->parameters()[0]->getType().getAsString();
-      if (C.Function->parameters()[0]->hasDefaultArg())
-        res += "=default";
-      for (const auto& x:llvm::drop_begin(C.Function->parameters())){
-        res+=", ";
-        res+=x->getType().getAsString();
-        if (x->hasDefaultArg()) res+="=def";
-      }
-    }*/
     return res;
   }
   std::vector<ExprValueKind> getCallKinds()const{
@@ -1005,11 +988,12 @@ private:
       if (endloc==endloc2)
         isImplicit=true;
     }
+    const auto callKinds=getCallKinds();
     res.callSignature =
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
     if (const Expr* Oe=Set->getObjectExpr()) {
       res.callTypes.push_back(
-          "(Obj:" + Oe->getType().getAsString() + ")");
+          "(Obj:" + Oe->getType().getCanonicalType().getAsString() + ")");
     }
     for (const auto& x:Args){
       if (x==nullptr) {res.callTypes.push_back("NULL"); continue;}
@@ -1026,15 +1010,18 @@ private:
           res.callTypes.back()+=" of "+commonType.getAsString();
         }*/
       }
-      else if (isa<CXXBoolLiteralExpr, CXXNullPtrLiteralExpr, CharacterLiteral,
+      /*else if (isa<CXXBoolLiteralExpr, CXXNullPtrLiteralExpr, CharacterLiteral,
           CompoundLiteralExpr, FixedPointLiteral, FloatingLiteral,
           ImaginaryLiteral, IntegerLiteral, ObjCArrayLiteral,
           ObjCBoolLiteralExpr, ObjCDictionaryLiteral, ObjCStringLiteral,
           StringLiteral>(x))
-        res.callTypes.push_back(x->getType().getAsString()+" literal");
+        res.callTypes.push_back(x->getType().getAsString()+" literal");*/
       else
-        res.callTypes.push_back(x->getType().getAsString());
+        res.callTypes.push_back(x->getType().getCanonicalType().getAsString());
       //if (!x->isLValue()) res.callTypes.back()+="!LV ";
+    }
+    for (size_t i=0; i!=callKinds.size();++i){
+      res.callTypes[i]+=Kinds[callKinds[i]];
     }
     for (const auto& cand:*Set){
       if (cand.Viable)
