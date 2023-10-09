@@ -24,12 +24,11 @@
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <deque>
 #include <iterator>
 #include <numeric>
 #include <optional>
 #include <string>
-#include <type_traits>
-#include <unordered_map>
 #include <vector>
 
 using namespace clang;
@@ -62,8 +61,9 @@ struct OvdlConvEntry{
 struct OvdlCandEntry{
   std::string declLocation;
   std::string name;
-  std::string signature;
+  std::deque<std::string> signature;
   std::string templateSource;
+  std::vector<std::string> templateSpecs;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
   std::vector<OvdlConvEntry> Conversions;
@@ -199,6 +199,7 @@ template <> struct MappingTraits<OvdlCandEntry>{
     io.mapRequired("Signature",fields.signature);
     io.mapRequired("declLocation",fields.declLocation);
     io.mapOptional("templateSource", fields.templateSource,"");
+    io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
     io.mapOptional("Conversions", fields.Conversions);
     io.mapOptional("FailureKind", fields.failKind);
     io.mapOptional("extraFailInfo", fields.extraFailInfo);
@@ -492,6 +493,8 @@ const QualType getToType(const ImplicitConversionSequence& C){
 QualType getToType(const OverloadCandidate& C,int idx){
   if (C.Function==nullptr)
     return getToType(C.Conversions[idx]);
+  if (0&&isa<CXXConversionDecl>(C.Function))
+    return C.FinalConversion.getToType(2);
   if (isa<CXXMethodDecl>(C.Function) &&
       !isa<CXXConstructorDecl>(C.Function))
     --idx;
@@ -633,6 +636,26 @@ public:
     compares.push_back(Entry);
   }
 private:
+  std::optional<OvdlCandEntry> summarizeBuiltIns(OvdlResEntry& E){
+    OvdlCandEntry res;
+    std::set<std::string> types[3];
+    if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
+      for (const auto& c:E.viableCandidates){
+        if (c.declLocation!="Built-in") continue;
+        for (size_t i=0; i!=c.signature.size(); i++){
+          types[i].emplace(c.signature[i]);
+        }
+      }
+      for (auto& st:types){
+        std::string s;
+        llvm::raw_string_ostream os(s);
+        for (auto& x:st) os<<x<<"/";
+        res.signature.emplace_back(s);
+      }
+      return res;
+    }
+    return {};
+  }
   std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
       const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,ExprValueKind vk){
     const static  llvm::StringLiteral compareSigns[]{">","=","<"};
@@ -803,26 +826,22 @@ private:
     else
       res.failKind={};
     res.extraFailInfo=getExtraFailInfo(C);
-    llvm::raw_string_ostream signature(res.signature);
+//    llvm::raw_string_ostream signature(res.signature);
     if (C.IsSurrogate){
       if (C.FoundDecl.getDecl()!=0){
         res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
       }
       res.declLocation = "Surrogate " + C.Surrogate->getLocation().printToString(S->SourceMgr);
-      signature<<C.Surrogate->getNameAsString();
+      res.signature={C.Surrogate->getNameAsString()};
       return res;
     }
 
-    if (C.FoundDecl.getDecl()==0) {
+    if (C.Function==nullptr) {
       res.declLocation="Built-in";
       res.name="";
-      if (C.FoundDecl!=nullptr){
-        res.name=C.FoundDecl->getNameAsString();
-      }
-      //res.builtIn=1;
       for (const auto& tmp:C.BuiltinParamTypes){
         if (tmp != QualType{})
-          signature << tmp.getAsString() << " ";
+          res.signature.push_back(tmp.getAsString());
       }
       return res;
     }
@@ -837,8 +856,24 @@ private:
         if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
           res.signature=mp->getThisObjectType().getAsString()+"; ";
       }*/
-      signature<<getSignature(C);
+      res.signature=getSignature(C);
       res.templateSource=getTemplate(C);
+      if (res.templateSource!="")
+        res.templateSpecs=getSpecializations(C);
+    }
+    return res;
+  }
+  std::vector<std::string> getSpecializations(const OverloadCandidate& C){
+    const NamedDecl* nd=C.FoundDecl.getDecl();
+    while (isa<UsingShadowDecl>(nd)){
+      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
+    }
+    const FunctionDecl* f=nd->getAsFunction();
+    std::vector<std::string> res;
+    for (const auto* x:f->getDescribedFunctionTemplate()->specializations()){
+      if (x->getSourceRange()!=f->getSourceRange()){
+        res.push_back(x->getSourceRange().printToString(S->getSourceManager()));
+      }
     }
     return res;
   }
@@ -848,13 +883,13 @@ private:
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
     }
     const FunctionDecl* f=nd->getAsFunction();
-    /*TODO if !f*/
-    if (!f)
+    if (!f)//Never happens
       llvm::errs() << C.FoundDecl->getLocation().printToString(S->SourceMgr)
                    << '\n';
     if (!f||!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
+    //res.tem getSpecializations(f->getDescribedFunctionTemplate());
     r.setEnd(f->getTypeSpecEndLoc());
     const auto* t=f->getDescribedTemplate();
     SourceLocation l0;
@@ -894,24 +929,19 @@ private:
     }
     return res;
   }
-  std::string getSignature(const OverloadCandidate& C) const{
+  std::deque<std::string> getSignature(const OverloadCandidate& C) const{
     //const FunctionDecl* f=C.Function;
-    std::string res;
-    llvm::raw_string_ostream os(res);
+    std::deque<std::string> res;
+    //llvm::raw_string_ostream os(res);
     const auto types=getSignatureTypes(C);
     size_t i=0;
     if (getThisType(C)!=QualType{}){
-      os<<getThisType(C).getCanonicalType().getAsString()<<"=this";
-      if (types.size()>1) os << ", ";
+      res.push_back(getThisType(C).getCanonicalType().getAsString()+"=this");
       ++i;
     }
-    for (; i+1<types.size();i++){
+    for (; i<types.size();i++){
       const auto&[type,isDefaulted]=types[i];
-      os<<type.getCanonicalType().getAsString()<<(isDefaulted?"=default":"")<<", ";
-    }
-    if (i+1==types.size()) {//non-empty
-      const auto&[type,isDefaulted]=types[i];
-      os<<type.getCanonicalType().getAsString()<<(isDefaulted?"=default":"");
+      res.push_back(type.getCanonicalType().getAsString()+(isDefaulted?"=default":""));
     }
     return res;
   }
@@ -992,8 +1022,12 @@ private:
     res.callSignature =
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
     if (const Expr* Oe=Set->getObjectExpr()) {
-      res.callTypes.push_back(
-          "(Obj:" + Oe->getType().getCanonicalType().getAsString() + ")");
+      QualType objType;
+      if (auto* UOe= llvm::dyn_cast<UnresolvedMemberExpr>(Oe))
+        objType=UOe->getBaseType().getCanonicalType();
+      else
+        objType=Oe->getType().getCanonicalType();
+      res.callTypes.push_back("(Obj:" + objType.getAsString() + ")");
     }
     for (const auto& x:Args){
       if (x==nullptr) {res.callTypes.push_back("NULL"); continue;}
