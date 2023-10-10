@@ -2,6 +2,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/TemplateBase.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
@@ -34,7 +35,7 @@
 using namespace clang;
 
 namespace {
-  CodeCompleteConsumer *GetCodeCompletionConsumer(CompilerInstance &CI) {
+CodeCompleteConsumer *GetCodeCompletionConsumer(CompilerInstance &CI) {
   return CI.hasCodeCompletionConsumer() ? &CI.getCodeCompletionConsumer()
                                         : nullptr;
 }
@@ -58,12 +59,17 @@ struct OvdlConvEntry{
     return path==o.path && pathInfo == o.pathInfo && kind==o.kind;
   }
 };
+struct OvdlTemplateSpec{
+  std::string declLocation;
+  std::string source;
+  std::vector<std::string> params;
+};
 struct OvdlCandEntry{
   std::string declLocation;
   std::string name;
   std::deque<std::string> signature;
   std::string templateSource;
-  std::vector<std::string> templateSpecs;
+  std::vector<OvdlTemplateSpec> templateSpecs;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
   std::vector<OvdlConvEntry> Conversions;
@@ -100,6 +106,7 @@ struct OvdlResEntry{
   std::string callSignature;
   clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
+  std::string note;
 };
 //bool OvdlResEntry::extraInfoHidden=1;
 struct OvdlResNode{
@@ -122,6 +129,7 @@ public:
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvdlCandEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlCompareEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlConvEntry);
+LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlTemplateSpec);
 namespace llvm{
 namespace yaml{
 template <> struct ScalarEnumerationTraits<OverloadingResult>{
@@ -193,6 +201,12 @@ template <> struct MappingTraits<OvdlConvEntry>{
     io.mapOptional("pathInfo",fields.pathInfo,"");
   }
 };
+template <> struct MappingTraits<OvdlTemplateSpec>{
+  static void mapping(IO& io, OvdlTemplateSpec& fields){
+    io.mapRequired("declLocation",fields.declLocation);
+    io.mapRequired("source",fields.source);
+  }
+};
 template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
     io.mapRequired("Name",fields.name);
@@ -240,6 +254,7 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapOptional("best",fields.best);
     io.mapOptional("problems",fields.problems);
     io.mapOptional("compares",fields.compares);
+    io.mapOptional("note",fields.note,"");
   }
 };
 
@@ -551,8 +566,7 @@ public:
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        line < settings.LineFrom ||
-        (line > settings.LineTo && settings.LineTo>0) ||
+        !inSetInterval(line) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares = {};
       return;
@@ -567,8 +581,7 @@ public:
     node.line=L.getLine();
     node.Fname=L.getFilename();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        node.line < settings.LineFrom ||
-        (node.line > settings.LineTo && settings.LineTo>0) ||
+        !inSetInterval(node.line) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
       compares={};
       inBestOC=false;
@@ -577,10 +590,14 @@ public:
     node.Entry=getResEntry(ovRes,BestOrProblem);
     node.Entry.compares=std::move(compares);
     compares={};
-    if (!settings.ShowAllCompares)
+    if (settings.ShowCompares!=FrontendOptions::SC_Verbose)
       filterForRelevant(node.Entry);
-    if (!isImplicit || settings.ShowImplicitConversions)
+    if (settings.SummarizeBuiltInBinOps)
+      summarizeBuiltInBinOps(node.Entry);
+    if (!isImplicit || settings.ShowImplicitConversions){
+      
       cont.add(node);
+    }
     inBestOC=false;
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
@@ -596,8 +613,7 @@ public:
     PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
     if (!L.isValid() ||
         (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        L.getLine() < settings.LineFrom ||
-        (L.getLine() > settings.LineTo && settings.LineTo > 0))
+        !inSetInterval(L.getLine()))
       return;
     OvdlCompareEntry Entry;
     Entry.C1Better=res;
@@ -636,7 +652,14 @@ public:
     compares.push_back(Entry);
   }
 private:
-  std::optional<OvdlCandEntry> summarizeBuiltIns(OvdlResEntry& E){
+  bool inSetInterval(unsigned x){
+    if (settings.Intervals.size()==0)
+      return true;
+    for (const auto& [from,to]:settings.Intervals)
+      if (from<=x && x<= to)return true;
+    return false;
+  }
+  std::optional<OvdlCandEntry> writeBuiltInsBinOpSumm(const OvdlResEntry& E){
     OvdlCandEntry res;
     std::set<std::string> types[3];
     if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
@@ -646,15 +669,53 @@ private:
           types[i].emplace(c.signature[i]);
         }
       }
+      size_t mx=0;
       for (auto& st:types){
+        mx=std::max(mx,st.size());
         std::string s;
         llvm::raw_string_ostream os(s);
         for (auto& x:st) os<<x<<"/";
-        res.signature.emplace_back(s);
+        if (s!=""){
+          s.pop_back();
+          res.signature.emplace_back(s);
+        }
       }
+      if (mx<2) return {};
+      if (types[0].empty() || types[1].empty() || !types[2].empty())
+        return {};//Non bin op
+      res.declLocation="Built-ins summarized";
       return res;
     }
     return {};
+  }
+
+  bool shouldSumm(const OvdlCandEntry& cand){
+     return cand.declLocation=="Built-in" && cand.signature.size()==2 && 
+        cand.signature[0]!=cand.signature[1];
+  }
+  void summarizeBuiltInBinOps(OvdlResEntry& E){
+    if (std::optional<OvdlCandEntry> c=writeBuiltInsBinOpSumm(E)){
+      for (int i=0; i<(int)E.viableCandidates.size();++i){
+        const auto& cand=E.viableCandidates[i];
+        if (shouldSumm(cand)){
+          std::swap(E.viableCandidates[i],E.viableCandidates.back());
+          --i;
+          E.viableCandidates.pop_back();
+        }
+      }
+      E.viableCandidates.push_back(*c);
+      auto relevants=getRelevantCands(E);
+      for (int i=0; i<(int)E.compares.size();++i){
+        const auto& comp=E.compares[i];
+        if ((!isIn(relevants,comp.C1) && shouldSumm(comp.C1)) || 
+            (!isIn(relevants,comp.C2) && shouldSumm(comp.C2))){
+          std::swap(E.compares.back(),E.compares[i]);
+          E.compares.pop_back();
+          --i;
+        }
+      }
+    }
+
   }
   std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
       const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,ExprValueKind vk){
@@ -668,17 +729,24 @@ private:
         Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ")";
     return res;
   }
-  void filterForRelevant(OvdlResEntry& Entry){
+  std::vector<OvdlCandEntry> getRelevantCands(OvdlResEntry& Entry)const{
     std::vector<OvdlCandEntry> relevants=Entry.problems;
     if (relevants.empty() && Entry.best){
       relevants.push_back(*Entry.best);
     }
+    return relevants;
+  }
+  bool isIn(const std::vector<OvdlCandEntry>& v, OvdlCandEntry c)const{
+    for (const auto& e:v){
+      if (e==c) return true;
+    }
+    return false;
+  }
+  void filterForRelevant(OvdlResEntry& Entry){
+    std::vector<OvdlCandEntry> relevants=getRelevantCands(Entry);
     for (size_t i=0; i<Entry.compares.size();++i){
-      bool isRelevant=false;
-      for (const auto& relevant:relevants){
-        isRelevant=isRelevant||Entry.compares[i].C1 == relevant;
-        isRelevant=isRelevant||Entry.compares[i].C2 == relevant;
-      }
+      bool isRelevant=isIn(relevants,Entry.compares[i].C1) ||
+                      isIn(relevants,Entry.compares[i].C2);
       if (!isRelevant){
         std::swap(Entry.compares[i],Entry.compares.back());
         Entry.compares.pop_back();
@@ -800,12 +868,12 @@ private:
 
     return res;
   }
-  OvdlCandEntry getCandEntry(const OverloadCandidate& C){
+  /*OvdlCandEntry getCandEntry(const OverloadCandidate& C){
     static std::vector<std::pair<const NamedDecl *, OvdlCandEntry>> mp;
-    if (const NamedDecl *p = C.Function) {
+    if (const NamedDecl *p = C.FoundDecl.getDecl()) {
       for (const auto &[key, val] : mp) {
-        if (key == p || S->isEquivalentInternalLinkageDeclaration(key, p))
-          ;//return val;
+        if (key == p / *|| S->isEquivalentInternalLinkageDeclaration(key, p)* /)
+          return val;
       }
       auto res = getCandEntryIner(C);
       mp.push_back({p, res});
@@ -814,8 +882,8 @@ private:
 
     auto res = getCandEntryIner(C);
     return res;
-  }
-  OvdlCandEntry getCandEntryIner(const OverloadCandidate &C) {
+  }*/
+  OvdlCandEntry getCandEntry(const OverloadCandidate &C) {
     OvdlCandEntry res;
     if (settings.ShowConversions)
       res.Conversions=getConversions(C);
@@ -839,6 +907,9 @@ private:
     if (C.Function==nullptr) {
       res.declLocation="Built-in";
       res.name="";
+      if (Set->getKind()==Set->CSK_Operator){
+        res.name=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
+      }
       for (const auto& tmp:C.BuiltinParamTypes){
         if (tmp != QualType{})
           res.signature.push_back(tmp.getAsString());
@@ -858,38 +929,36 @@ private:
       }*/
       res.signature=getSignature(C);
       res.templateSource=getTemplate(C);
-      if (res.templateSource!="")
+      if (res.templateSource!=""&&settings.ShowTemplateSpecs)
         res.templateSpecs=getSpecializations(C);
     }
     return res;
   }
-  std::vector<std::string> getSpecializations(const OverloadCandidate& C){
+  std::vector<OvdlTemplateSpec> getSpecializations(const OverloadCandidate& C){
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
     }
     const FunctionDecl* f=nd->getAsFunction();
-    std::vector<std::string> res;
+    std::vector<OvdlTemplateSpec> res;
     for (const auto* x:f->getDescribedFunctionTemplate()->specializations()){
       if (x->getSourceRange()!=f->getSourceRange()){
-        res.push_back(x->getSourceRange().printToString(S->getSourceManager()));
+        OvdlTemplateSpec entry;
+        entry.declLocation=x->getLocation().printToString(S->getSourceManager());
+        SourceLocation endloc(Lexer::getLocForEndOfToken(
+            x->getTypeSpecEndLoc(), 0, S->getSourceManager(), S->getLangOpts()));
+        CharSourceRange range=CharSourceRange::getCharRange(x->getLocation(),endloc);
+        entry.source= std::string(
+            Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+        res.push_back(entry);
       }
     }
     return res;
   }
-  std::string getTemplate(const OverloadCandidate& C){
-    const NamedDecl* nd=C.FoundDecl.getDecl();
-    while (isa<UsingShadowDecl>(nd)){
-      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-    }
-    const FunctionDecl* f=nd->getAsFunction();
-    if (!f)//Never happens
-      llvm::errs() << C.FoundDecl->getLocation().printToString(S->SourceMgr)
-                   << '\n';
+  std::string getTemplate(const FunctionDecl* f){
     if (!f||!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
-    //res.tem getSpecializations(f->getDescribedFunctionTemplate());
     r.setEnd(f->getTypeSpecEndLoc());
     const auto* t=f->getDescribedTemplate();
     SourceLocation l0;
@@ -906,6 +975,14 @@ private:
     CharSourceRange range=CharSourceRange::getCharRange(r.getBegin(),endloc);
     return std::string(
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+  }
+  std::string getTemplate(const OverloadCandidate& C){
+    const NamedDecl* nd=C.FoundDecl.getDecl();
+    while (isa<UsingShadowDecl>(nd)){
+      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
+    }
+    const FunctionDecl* f=nd->getAsFunction();
+    return getTemplate(f);
   }
   QualType getThisType(const OverloadCandidate& C)const{
     if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){

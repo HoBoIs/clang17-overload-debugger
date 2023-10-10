@@ -2540,21 +2540,24 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
 
   if (Opts.ProgramAction == frontend::OvdlDump) {
     GenerateProgramAction = [&]() {
-      static const std::string ConvNames[]{
-        "HideConversions","ShowConversions","VerboseConversions"
+      static constexpr llvm::StringLiteral OptPrefixes[]{
+        "Hide","Show","Verbose"
       };
-      GenerateArg(Args, OPT_ovdl_dump_opt, 
-          std::to_string(Opts.OvdlSettings.LineFrom)+"-"+
-          std::to_string(Opts.OvdlSettings.LineTo)+
-          std::string(Opts.OvdlSettings.ShowEmptyOverloads?",ShowEmptyOverloads":",HideEmptyOverloads")+
-          std::string(Opts.OvdlSettings.ShowCompares?",ShowCompares":",HideCompares")+
-          std::string(Opts.OvdlSettings.ShowIncludes?",ShowIncludes":",HideIncludes")+
-          std::string(Opts.OvdlSettings.ShowNonViableCands?",ShowNonViableCands":",HideNonViableCands")+ 
-          std::string(Opts.OvdlSettings.ShowImplicitConversions?",ShowImplicitConversions":",HideImplicitConversions")+","+
-          std::string(Opts.OvdlSettings.ShowBuiltInNonViable?",ShowBuiltInNonViable":",HideBuiltInNonViable")+","+
-          std::string(Opts.OvdlSettings.ShowAllCompares?",ShowAllCompares":",HideAllCompares")+","+
-          ConvNames[Opts.OvdlSettings.ShowConversions],
-          SA);
+      std::string argStr;
+      llvm::raw_string_ostream os(argStr);
+      for (const auto&[from,to]:Opts.OvdlSettings.Intervals){
+        os<<from<<"-"<<to<<",";
+      }
+      os<<(Opts.OvdlSettings.ShowEmptyOverloads?"Show":"Hide")<<"EmptyOverloads,"
+        <<(Opts.OvdlSettings.ShowIncludes?"Show":"Hide")<<"Includes,"
+        <<(Opts.OvdlSettings.ShowNonViableCands?"Show":"Hide")<<"NonViableCands,"
+        <<(Opts.OvdlSettings.ShowImplicitConversions?"Show":"Hide")<<"ImplicitConversions,"
+        <<(Opts.OvdlSettings.ShowBuiltInNonViable?"Show":"Hide")<<"BuiltInNonViable,"
+        <<(Opts.OvdlSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
+        <<(Opts.OvdlSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
+        <<OptPrefixes[Opts.OvdlSettings.ShowCompares]<<"Compares,"
+        <<OptPrefixes[Opts.OvdlSettings.ShowConversions]<<"Conversions";
+      GenerateArg(Args, OPT_ovdl_dump_opt,argStr,SA);
     };
 
   }
@@ -2741,56 +2744,61 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     }
     if (ProgramAction == frontend::OvdlDump && Opt == OPT_ovdl_dump_opt){
       const auto& x=A->getValues();
-      for (const auto& y:x){
-        const std::string s=y;
+      for (const std::string s:x){
         if (s=="ShowNonViableCands"){
-          Opts.OvdlSettings.ShowNonViableCands=1;
+          Opts.OvdlSettings.ShowNonViableCands=true;
         } else if (s=="HideNonViableCands"){
-          Opts.OvdlSettings.ShowNonViableCands=0;
+          Opts.OvdlSettings.ShowNonViableCands=false;
         } else if (s=="ShowIncludes"){
-          Opts.OvdlSettings.ShowIncludes=1;
+          Opts.OvdlSettings.ShowIncludes=true;
         } else if (s=="HideIncludes"){
-          Opts.OvdlSettings.ShowIncludes=0;
-        } else if (s=="ShowCompares"){
-          Opts.OvdlSettings.ShowCompares=1;
-        } else if (s=="HideCompares"){
-          Opts.OvdlSettings.ShowCompares=0;
+          Opts.OvdlSettings.ShowIncludes=false;
         } else if (s=="ShowEmptyOverloads"){
-          Opts.OvdlSettings.ShowEmptyOverloads=1;
+          Opts.OvdlSettings.ShowEmptyOverloads=true;
         } else if (s=="HideEmptyOverloads"){
-          Opts.OvdlSettings.ShowEmptyOverloads=0;
+          Opts.OvdlSettings.ShowEmptyOverloads=false;
         } else if (s=="ShowBuiltInNonViable"){
-          Opts.OvdlSettings.ShowBuiltInNonViable=1;
+          Opts.OvdlSettings.ShowBuiltInNonViable=true;
         } else if (s=="HideBuiltInNonViable"){
-          Opts.OvdlSettings.ShowBuiltInNonViable=0;
+          Opts.OvdlSettings.ShowBuiltInNonViable=false;
         } else if (s=="ShowImplicitConversions"){
-          Opts.OvdlSettings.ShowImplicitConversions=1;
+          Opts.OvdlSettings.ShowImplicitConversions=true;
         } else if (s=="HideImplicitConversions"){
-          Opts.OvdlSettings.ShowImplicitConversions=0;
-        } else if (s=="ShowAllCompares"){
-          Opts.OvdlSettings.ShowAllCompares=1;
-        } else if (s=="HideAllCompares"){
-          Opts.OvdlSettings.ShowAllCompares=0;
+          Opts.OvdlSettings.ShowImplicitConversions=false;
         } else if (s=="ShowConversions"){
           Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Normal;
         } else if (s=="HideConversions"){
           Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Hide;
         } else if (s=="VerboseConversions"){
           Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Verbose;
+        } else if (s=="ShowCompares"){
+          Opts.OvdlSettings.ShowCompares=clang::FrontendOptions::SC_Normal;
+        } else if (s=="HideCompares"){
+          Opts.OvdlSettings.ShowCompares=clang::FrontendOptions::SC_Hide;
+        } else if (s=="VerboseCompares"){
+          Opts.OvdlSettings.ShowCompares=clang::FrontendOptions::SC_Verbose;
+        } else if (s=="SummarizeBuiltInBinOps"){
+          Opts.OvdlSettings.SummarizeBuiltInBinOps=true;
+        } else if (s=="ShowBuiltInBinOps"){
+          Opts.OvdlSettings.SummarizeBuiltInBinOps=false;
+        } else if (s=="ShowTemplateSpecs"){
+          Opts.OvdlSettings.ShowTemplateSpecs=true;
+        } else if (s=="HideTemplateSpecs"){
+          Opts.OvdlSettings.ShowTemplateSpecs=false;
         } else {
-          unsigned lF=0,lT=0;
+          unsigned lF=0;
           unsigned actual=0;
           bool lFfinished=false;
           bool valid=true;
           for (const char& c:s){
             if (c=='-'){
-              if (lFfinished){
-                valid=false;
-                break;
-              }else{
+              if (!lFfinished){
                 lFfinished=true;
                 lF=actual;
                 actual=0;
+              }else{
+                valid=false;
+                break;
               }
             }else if(c>='0' && c<='9'){
               actual=10*actual+c-'0';
@@ -2799,16 +2807,16 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
               break;
             }
           }
-          if (valid && !lFfinished){
-            lT=lF=actual;
-            Opts.OvdlSettings.LineFrom=lF;
-            Opts.OvdlSettings.LineTo=lT;
-          }else if (valid && lFfinished){
-            lT=actual;
-            Opts.OvdlSettings.LineFrom=lF;
-            Opts.OvdlSettings.LineTo=lT;
-          }else{
-            llvm::errs()<<"unkonwn param: "<<s<<'\n';
+          if (lFfinished && valid && actual<lF){
+            llvm::errs()<<"The start of the interval must be not larger than it's end\n";
+            valid=false;
+          }
+          if (!valid)
+            Diags.Report(diag::err_drv_invalid_value)<<A->getAsString(Args)<<s;
+          if (!lFfinished){
+            Opts.OvdlSettings.Intervals.emplace_back(actual,actual);
+          }else {
+            Opts.OvdlSettings.Intervals.emplace_back(lF,actual);
           }
         } 
       }

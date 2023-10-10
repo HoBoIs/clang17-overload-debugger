@@ -14,6 +14,7 @@
 #include "clang/Frontend/CommandLineSourceLoc.h"
 #include "clang/Sema/CodeCompleteOptions.h"
 #include "clang/Serialization/ModuleFileExtension.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cassert>
@@ -516,22 +517,23 @@ public:
   /// Path which stores the output files for -ftime-trace
   std::string TimeTracePath;
 
-  enum OvdlShowConversions{
+  enum OvdlLevelEnum{
     SC_Hide=0,
     SC_Normal,
     SC_Verbose
   };
 
   struct OvdlSettingsC{
-    unsigned LineFrom,LineTo;
+    llvm::SmallVector<std::pair<unsigned,unsigned>,2> Intervals;
     unsigned ShowNonViableCands:1;
     unsigned ShowIncludes:1;
-    unsigned ShowCompares:1;
+    unsigned ShowCompares:2;
     unsigned ShowEmptyOverloads:1;
     unsigned ShowImplicitConversions:1;
     unsigned ShowConversions:2;
     unsigned ShowBuiltInNonViable:1;
-    unsigned ShowAllCompares:1;
+    unsigned ShowTemplateSpecs:1;
+    unsigned SummarizeBuiltInBinOps:1;
   }OvdlSettings;
 
 
@@ -548,7 +550,7 @@ public:
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         TimeTraceGranularity(500),
-        OvdlSettings({0,0,true,false,true,false,false,SC_Normal,false,false}) {}
+        OvdlSettings({{},true,false,SC_Normal,false,false,SC_Normal,false,true,true}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.
