@@ -242,8 +242,6 @@ template <> struct MappingTraits<OvdlCompareEntry>{
 };
 template <> struct MappingTraits<OvdlResEntry>{
   static void mapping(IO& io, OvdlResEntry& fields){
-    //std::string strcands;
-    //for (const auto& c:fields.candidates){}
     io.mapRequired("callLocation",fields.callLocation);
     io.mapRequired("callSignature",fields.callSignature);
     io.mapRequired("callTypes",fields.callTypes);
@@ -595,7 +593,6 @@ public:
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);
     if (!isImplicit || settings.ShowImplicitConversions){
-      
       cont.add(node);
     }
     inBestOC=false;
@@ -625,7 +622,7 @@ public:
       if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
     }
     Entry.reason=toString(reason);
-    const auto callKinds=getCallKinds();
+    const auto& callKinds=getCallKinds();
     if (reason==clang::betterConversion){
       Entry.deciderConversion = ConversionCompareAsString(Cand1,Cand2,infoIdx,
         res?CompareKind::Better:CompareKind::Worse,callKinds[infoIdx]) +
@@ -659,42 +656,60 @@ private:
       if (from<=x && x<= to)return true;
     return false;
   }
-  std::optional<OvdlCandEntry> writeBuiltInsBinOpSumm(const OvdlResEntry& E){
-    OvdlCandEntry res;
+  std::optional<std::pair<std::string,std::string>> writeBuiltInsBinOpSumm(const OvdlResEntry& E){
+    std::pair<std::string,std::string> res;
     std::set<std::string> types[3];
     if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
       for (const auto& c:E.viableCandidates){
-        if (c.declLocation!="Built-in") continue;
+        if (!shouldSumm(c)) continue;
         for (size_t i=0; i!=c.signature.size(); i++){
           types[i].emplace(c.signature[i]);
         }
       }
-      size_t mx=0;
-      for (auto& st:types){
-        mx=std::max(mx,st.size());
-        std::string s;
-        llvm::raw_string_ostream os(s);
-        for (auto& x:st) os<<x<<"/";
-        if (s!=""){
-          s.pop_back();
-          res.signature.emplace_back(s);
-        }
-      }
-      if (mx<2) return {};
       if (types[0].empty() || types[1].empty() || !types[2].empty())
         return {};//Non bin op
-      res.declLocation="Built-ins summarized";
+      llvm::raw_string_ostream os(res.first);
+      for (auto& x:types[0]) os<<x<<"/";
+      res.first.pop_back();
+      llvm::raw_string_ostream os2(res.second);
+      for (auto& x:types[1]) os2<<x<<"/";
+      res.second.pop_back();
       return res;
     }
     return {};
   }
-
+  std::string getTokenFromLoc(const SourceLocation& loc) const{
+    if (loc==SourceLocation{})
+      return "";
+    SourceLocation endloc(Lexer::getLocForEndOfToken(
+            loc, 0, S->getSourceManager(), S->getLangOpts()));
+    CharSourceRange range=CharSourceRange::getCharRange(loc,endloc);
+    return std::string(Lexer::getSourceText(
+          range, S->getSourceManager(), S->getLangOpts()));
+  }
+  std::string getBuiltInOperatorName()const{
+    assert(Set->CSK_Operator == Set->getKind() && "Not operator");
+    const char* cc=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
+    //Not handles all operators
+    if (cc)
+      return cc;
+    std::string s1=getTokenFromLoc(Set->getLocation());
+    //Note:there are no builtin operator ->
+    if (s1=="(")
+      s1="()";
+    else if (s1=="[")
+      s1="[]";
+    else if (s1=="?")
+      s1="?:";
+    return s1;
+  }
   bool shouldSumm(const OvdlCandEntry& cand){
-     return cand.declLocation=="Built-in" && cand.signature.size()==2 && 
-        cand.signature[0]!=cand.signature[1];
+    return cand.declLocation=="Built-in" && cand.signature.size()==2 && 
+        cand.signature[0]!=cand.signature[1] && cand.name!="()" && 
+        cand.name!="," && cand.name!="[]"&&cand.name!="++"&&cand.name!="--";
   }
   void summarizeBuiltInBinOps(OvdlResEntry& E){
-    if (std::optional<OvdlCandEntry> c=writeBuiltInsBinOpSumm(E)){
+    if (const auto& c=writeBuiltInsBinOpSumm(E)){
       for (int i=0; i<(int)E.viableCandidates.size();++i){
         const auto& cand=E.viableCandidates[i];
         if (shouldSumm(cand)){
@@ -703,7 +718,7 @@ private:
           E.viableCandidates.pop_back();
         }
       }
-      E.viableCandidates.push_back(*c);
+      //E.viableCandidates.push_back(*c);
       auto relevants=getRelevantCands(E);
       for (int i=0; i<(int)E.compares.size();++i){
         const auto& comp=E.compares[i];
@@ -714,6 +729,8 @@ private:
           --i;
         }
       }
+      E.note+="There are more viable built in functions, with the calltypes combined from "+
+        c->first+" and "+c->second+" you can list them with \"ShowBuiltInBinOps\"";
     }
 
   }
@@ -800,7 +817,7 @@ private:
   }
   std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C){
     std::vector<OvdlConvEntry> res;
-    const auto callKinds=getCallKinds();
+    const auto& callKinds=getCallKinds();
     for (size_t i=0; i<C.Conversions.size();++i){
       const ExprValueKind fromKind=callKinds[i];
       const auto& conv=C.Conversions[i];
@@ -908,7 +925,7 @@ private:
       res.declLocation="Built-in";
       res.name="";
       if (Set->getKind()==Set->CSK_Operator){
-        res.name=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
+        res.name=getBuiltInOperatorName();
       }
       for (const auto& tmp:C.BuiltinParamTypes){
         if (tmp != QualType{})
@@ -1037,7 +1054,7 @@ private:
     for (const auto *Arg:Args){
       res.push_back(Arg->getValueKind());
     }
-
+    //postfix operator ++/-- 
     return res;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres,
@@ -1095,7 +1112,7 @@ private:
       if (endloc==endloc2)
         isImplicit=true;
     }
-    const auto callKinds=getCallKinds();
+    const auto& callKinds=getCallKinds();
     res.callSignature =
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
     if (const Expr* Oe=Set->getObjectExpr()) {

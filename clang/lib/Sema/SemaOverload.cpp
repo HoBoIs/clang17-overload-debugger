@@ -13773,7 +13773,7 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
   }
 
   // Build an empty overload set.
-  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,Input);
+  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,{Args,NumArgs});
 
   // Add the candidates from the given function set.
   AddNonMemberOperatorCandidates(Fns, ArgsArray, CandidateSet);
