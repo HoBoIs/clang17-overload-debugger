@@ -2556,7 +2556,8 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
         <<(Opts.OvdlSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
         <<(Opts.OvdlSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
         <<OptPrefixes[Opts.OvdlSettings.ShowCompares]<<"Compares,"
-        <<OptPrefixes[Opts.OvdlSettings.ShowConversions]<<"Conversions";
+        <<OptPrefixes[Opts.OvdlSettings.ShowConversions]<<"Conversions"
+        <<(Opts.OvdlSettings.Help?"Help":"");
       GenerateArg(Args, OPT_ovdl_dump_opt,argStr,SA);
     };
 
@@ -2785,6 +2786,8 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvdlSettings.ShowTemplateSpecs=true;
         } else if (s=="HideTemplateSpecs"){
           Opts.OvdlSettings.ShowTemplateSpecs=false;
+        } else if (s=="Help"){
+          Opts.OvdlSettings.Help=true;
         } else {
           unsigned lF=0;
           unsigned actual=0;

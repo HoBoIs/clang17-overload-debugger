@@ -41,6 +41,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Casting.h"
 #include "clang/Sema/OverloadCallback.h"
+#include "llvm/Support/Compiler.h"
 #include <algorithm>
 #include <cstdlib>
 #include <optional>
@@ -10008,8 +10009,7 @@ bool clang::isBetterOverloadCandidate(
   //   A viable function F1 is defined to be a better function than another
   //   viable function F2 if for all arguments i, ICSi(F1) is not a worse
   //   conversion sequence than ICSi(F2), and then...
-  if (__builtin_expect(!S.OverloadCallbacks.empty(),0)){
-    //UNLIKELY
+  if (LLVM_UNLIKELY(!S.OverloadCallbacks.empty())){
     bool isAny=false;
     for (const auto& c:S.OverloadCallbacks)
       isAny=isAny||c->needAllCompareInfo();

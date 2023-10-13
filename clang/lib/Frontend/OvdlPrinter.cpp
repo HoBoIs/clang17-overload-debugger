@@ -107,6 +107,7 @@ struct OvdlResEntry{
   clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
   std::string note;
+  bool isImplicit=false;
 };
 //bool OvdlResEntry::extraInfoHidden=1;
 struct OvdlResNode{
@@ -252,6 +253,7 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapOptional("best",fields.best);
     io.mapOptional("problems",fields.problems);
     io.mapOptional("compares",fields.compares);
+    io.mapOptional("IsImplicit",fields.isImplicit,false);
     io.mapOptional("note",fields.note,"");
   }
 };
@@ -531,12 +533,12 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   using CompareKind = clang::ImplicitConversionSequence::CompareKind;
   static constexpr llvm::StringLiteral Kinds[]={"[temporary]","","&&"};
   const Sema* S=nullptr;
-  bool inBestOC=false,isImplicit;
+  bool inBestOC=false;
   const OverloadCandidateSet* Set=nullptr;
   const SourceLocation* Loc=nullptr;
   std::vector<OvdlCompareEntry> compares;
   OvdlResCont cont;
-  clang::FrontendOptions::OvdlSettingsC settings;
+  clang::FrontendOptions::OvdlSettingsType settings;
   std::vector<CompareKind> compareResults;
 public:
   virtual bool needAllCompareInfo() const override{
@@ -547,7 +549,7 @@ public:
     if (needAllCompareInfo())
       compareResults=c;
   };
-  void setSettings(const clang::FrontendOptions::OvdlSettingsC &s) {
+  void setSettings(const clang::FrontendOptions::OvdlSettingsType &s) {
     settings = s;
   }
   virtual void initialize(const Sema&) override{};
@@ -592,7 +594,7 @@ public:
       filterForRelevant(node.Entry);
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);
-    if (!isImplicit || settings.ShowImplicitConversions){
+    if (!node.Entry.isImplicit || settings.ShowImplicitConversions){
       cont.add(node);
     }
     inBestOC=false;
@@ -649,14 +651,14 @@ public:
     compares.push_back(Entry);
   }
 private:
-  bool inSetInterval(unsigned x){
+  bool inSetInterval(unsigned x)const{
     if (settings.Intervals.size()==0)
       return true;
     for (const auto& [from,to]:settings.Intervals)
       if (from<=x && x<= to)return true;
     return false;
   }
-  std::optional<std::pair<std::string,std::string>> writeBuiltInsBinOpSumm(const OvdlResEntry& E){
+  std::optional<std::pair<std::string,std::string>> writeBuiltInsBinOpSumm(const OvdlResEntry& E)const{
     std::pair<std::string,std::string> res;
     std::set<std::string> types[3];
     if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
@@ -669,10 +671,10 @@ private:
       if (types[0].empty() || types[1].empty() || !types[2].empty())
         return {};//Non bin op
       llvm::raw_string_ostream os(res.first);
-      for (auto& x:types[0]) os<<x<<"/";
+      for (auto& x:types[0]) os<<x<<'/';
       res.first.pop_back();
       llvm::raw_string_ostream os2(res.second);
-      for (auto& x:types[1]) os2<<x<<"/";
+      for (auto& x:types[1]) os2<<x<<'/';
       res.second.pop_back();
       return res;
     }
@@ -703,7 +705,7 @@ private:
       s1="?:";
     return s1;
   }
-  bool shouldSumm(const OvdlCandEntry& cand){
+  bool shouldSumm(const OvdlCandEntry& cand)const{
     return cand.declLocation=="Built-in" && cand.signature.size()==2 && 
         cand.signature[0]!=cand.signature[1] && cand.name!="()" && 
         cand.name!="," && cand.name!="[]"&&cand.name!="++"&&cand.name!="--";
@@ -735,15 +737,15 @@ private:
 
   }
   std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
-      const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,ExprValueKind vk){
-    const static  llvm::StringLiteral compareSigns[]{">","=","<"};
+      const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,ExprValueKind vk)const{
+    const static char compareSigns[]{'>','=','<'};
     std::string res;
     llvm::raw_string_ostream os(res);
-    os<< "(" << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
+    os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
         Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString() <<
         ")\t" << compareSigns[cmpRes + 1] << "\t(" <<
         getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() <<
-        Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ")";
+        Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ')';
     return res;
   }
   std::vector<OvdlCandEntry> getRelevantCands(OvdlResEntry& Entry)const{
@@ -759,7 +761,7 @@ private:
     }
     return false;
   }
-  void filterForRelevant(OvdlResEntry& Entry){
+  void filterForRelevant(OvdlResEntry& Entry)const{
     std::vector<OvdlCandEntry> relevants=getRelevantCands(Entry);
     for (size_t i=0; i<Entry.compares.size();++i){
       bool isRelevant=isIn(relevants,Entry.compares[i].C1) ||
@@ -771,18 +773,40 @@ private:
       }
     }
   }
-  std::optional<std::string> getExtraFailInfo(const OverloadCandidate& C){
+  std::pair<int,int> NeededArgs(const OverloadCandidate& C)const{
+    if (C.IsSurrogate){return {-1,-1};}//TODO
+    if (C.Function){
+      const auto& x=getSignatureTypes(C);
+      int nondef=0;
+      for (const auto& y:x){
+        if (!y.second)++nondef;
+      }
+      return {nondef,x.size()};
+    }
+    int res=0;
+    for (int i=0; i!=3;i++)
+      if (C.BuiltinParamTypes[i]!=QualType{})
+        ++res;
+    return {res,res};
+  }
+  std::optional<std::string> getExtraFailInfo(const OverloadCandidate& C)const{
     if (C.Viable) return {};
+    std::string res;
+    llvm::raw_string_ostream os(res);
     switch ((OverloadFailureKind)C.FailureKind) {
     case ovl_fail_too_many_arguments:
-    case ovl_fail_too_few_arguments:
-      return {};
+    case ovl_fail_too_few_arguments:{
+      const auto &[mn,mx]=NeededArgs(C);
+      os<<"Needed: "<<mn;
+      if (mn!=mx)
+        os<<"-"<<mx;
+      os<<" Got: "<<getCallKinds().size();
+      return res;
+    }
     case ovl_fail_bad_conversion:
       for (size_t i=0; i!=C.Conversions.size(); i++){
         if (!C.Conversions[i].isInitialized())continue;
         if (C.Conversions[i].isBad()){
-          std::string res;
-          llvm::raw_string_ostream os(res);
           os << toString(C.Conversions[i].Bad.Kind) <<
                  " Pos: " <<  std::to_string(i) <<  "    From: " <<
                  C.Conversions[i].Bad.getFromType().getAsString() <<
@@ -800,10 +824,9 @@ private:
     case ovl_fail_final_conversion_not_exact:
     case ovl_fail_bad_target:
       return {};
-    case ovl_fail_enable_if:{
+    case ovl_fail_enable_if:
       return std::string(
           static_cast<EnableIfAttr *>(C.DeductionFailure.Data)->getMessage());
-      }
     case ovl_fail_explicit:
     case ovl_fail_addr_not_available:
     case ovl_fail_inhctor_slice:
@@ -815,7 +838,7 @@ private:
     }
     return {};
   }
-  std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C){
+  std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C)const{
     std::vector<OvdlConvEntry> res;
     const auto& callKinds=getCallKinds();
     for (size_t i=0; i<C.Conversions.size();++i){
@@ -900,7 +923,7 @@ private:
     auto res = getCandEntryIner(C);
     return res;
   }*/
-  OvdlCandEntry getCandEntry(const OverloadCandidate &C) {
+  OvdlCandEntry getCandEntry(const OverloadCandidate &C)const {
     OvdlCandEntry res;
     if (settings.ShowConversions)
       res.Conversions=getConversions(C);
@@ -951,7 +974,7 @@ private:
     }
     return res;
   }
-  std::vector<OvdlTemplateSpec> getSpecializations(const OverloadCandidate& C){
+  std::vector<OvdlTemplateSpec> getSpecializations(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
@@ -972,7 +995,7 @@ private:
     }
     return res;
   }
-  std::string getTemplate(const FunctionDecl* f){
+  std::string getTemplate(const FunctionDecl* f)const{
     if (!f||!f->isTemplated() ) return "";
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
@@ -993,7 +1016,7 @@ private:
     return std::string(
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
   }
-  std::string getTemplate(const OverloadCandidate& C){
+  std::string getTemplate(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
@@ -1054,12 +1077,10 @@ private:
     for (const auto *Arg:Args){
       res.push_back(Arg->getValueKind());
     }
-    //postfix operator ++/-- 
     return res;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres,
-                           const OverloadCandidate *BestOrProblem) {
-    isImplicit=false;
+                           const OverloadCandidate *BestOrProblem)const {
     OvdlResEntry res;
     res.ovRes=ovres;
     if (ovres==OR_Success) {
@@ -1110,7 +1131,7 @@ private:
       SourceLocation endloc2(Lexer::getLocForEndOfToken(
           Args[0]->getEndLoc(), 0, S->getSourceManager(), S->getLangOpts()));
       if (endloc==endloc2)
-        isImplicit=true;
+        res.isImplicit=true;
     }
     const auto& callKinds=getCallKinds();
     res.callSignature =
@@ -1121,32 +1142,14 @@ private:
         objType=UOe->getBaseType().getCanonicalType();
       else
         objType=Oe->getType().getCanonicalType();
-      res.callTypes.push_back("(Obj:" + objType.getAsString() + ")");
+      res.callTypes.push_back("(Obj:" + objType.getAsString() + ')');
     }
     for (const auto& x:Args){
       if (x==nullptr) {res.callTypes.push_back("NULL"); continue;}
-      if (auto* y=dyn_cast<clang::InitListExpr>(x)){
+      if (isa<clang::InitListExpr>(x))
         res.callTypes.push_back("InitizerList");
-        /*if (!y->inits().empty()){
-          y->children();
-          QualType commonType=std::accumulate
-            (y->inits().begin(), y->inits().end(), (*y->inits().begin())->getType(),
-              [=](const QualType& x,Expr* y){
-                return S->getASTContext().getCommonSugaredType(x,y->getType(),1);
-              }
-            );
-          res.callTypes.back()+=" of "+commonType.getAsString();
-        }*/
-      }
-      /*else if (isa<CXXBoolLiteralExpr, CXXNullPtrLiteralExpr, CharacterLiteral,
-          CompoundLiteralExpr, FixedPointLiteral, FloatingLiteral,
-          ImaginaryLiteral, IntegerLiteral, ObjCArrayLiteral,
-          ObjCBoolLiteralExpr, ObjCDictionaryLiteral, ObjCStringLiteral,
-          StringLiteral>(x))
-        res.callTypes.push_back(x->getType().getAsString()+" literal");*/
       else
         res.callTypes.push_back(x->getType().getCanonicalType().getAsString());
-      //if (!x->isLValue()) res.callTypes.back()+="!LV ";
     }
     for (size_t i=0; i!=callKinds.size();++i){
       res.callTypes[i]+=Kinds[callKinds[i]];
@@ -1169,7 +1172,6 @@ OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
     return std::make_unique<ASTConsumer>();
 }
 void OvdlDumpAction::ExecuteAction(){
-
   CompilerInstance &CI = getCompilerInstance();
   EnsureSemaIsCreated(CI, *this);
   auto x=std::make_unique<DefaultOverloadInstCallback>();
