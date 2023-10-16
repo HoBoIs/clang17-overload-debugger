@@ -1,9 +1,11 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/Type.h"
+#include "clang/AST/TypeLoc.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -214,7 +216,8 @@ template <> struct MappingTraits<OvdlCandEntry>{
     io.mapRequired("Signature",fields.signature);
     io.mapRequired("declLocation",fields.declLocation);
     io.mapOptional("templateSource", fields.templateSource,"");
-    io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
+    //io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
+    io.mapOptional("templateSpecs (overloading is decided before specialisation)", fields.templateSpecs);
     io.mapOptional("Conversions", fields.Conversions);
     io.mapOptional("FailureKind", fields.failKind);
     io.mapOptional("extraFailInfo", fields.extraFailInfo);
@@ -253,7 +256,7 @@ template <> struct MappingTraits<OvdlResEntry>{
     io.mapOptional("best",fields.best);
     io.mapOptional("problems",fields.problems);
     io.mapOptional("compares",fields.compares);
-    io.mapOptional("IsImplicit",fields.isImplicit,false);
+    io.mapOptional("Implicit",fields.isImplicit,false);
     io.mapOptional("note",fields.note,"");
   }
 };
@@ -517,6 +520,8 @@ QualType getToType(const OverloadCandidate& C,int idx){
     return getToType(C.Conversions[0]);//TODO:thistype
     //return llvm::dyn_cast<CXXMethodDecl>(C.Function)->getThisType();
   }
+  if (C.Conversions[idx].getKind()==ImplicitConversionSequence::Kind::EllipsisConversion)
+    return QualType{};
   return C.Function->parameters()[idx]->getType();
 }
 void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
@@ -741,11 +746,19 @@ private:
     const static char compareSigns[]{'>','=','<'};
     std::string res;
     llvm::raw_string_ostream os(res);
-    os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
+    if (!Cand1.Conversions[idx].isEllipsis())
+      os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
         Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString() <<
-        ")\t" << compareSigns[cmpRes + 1] << "\t(" <<
+        ')';
+    else
+     os<<"Ellipsis";
+    os<< '\t' << compareSigns[cmpRes + 1] << '\t';
+    if (!Cand2.Conversions[idx].isEllipsis())
+      os<<'(' <<
         getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() <<
         Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ')';
+    else
+     os<<"Ellipsis";
     return res;
   }
   std::vector<OvdlCandEntry> getRelevantCands(OvdlResEntry& Entry)const{
@@ -774,14 +787,24 @@ private:
     }
   }
   std::pair<int,int> NeededArgs(const OverloadCandidate& C)const{
-    if (C.IsSurrogate){return {-1,-1};}//TODO
-    if (C.Function){
-      const auto& x=getSignatureTypes(C);
-      int nondef=0;
-      for (const auto& y:x){
-        if (!y.second)++nondef;
+    if (C.IsSurrogate){
+      //C.FoundDecl.getDecl();
+      const NamedDecl* nd=C.FoundDecl.getDecl();
+      while (isa<UsingShadowDecl>(nd)){
+        nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
       }
-      return {nondef,x.size()};
+      const auto ty=nd->getAsFunction()->getCallResultType();
+        //The type of the functionPtr
+      const auto* fptr=ty->getAs<PointerType>()->getPointeeType()->getAs<FunctionProtoType>();
+      fptr->dump();
+      int cnt=fptr->getNumParams()+1;
+      return {cnt,cnt};
+    }//TODO
+    if (C.Function){
+      //Check when deducing this is implemented FIXME
+      bool needObj=isa<CXXMethodDecl>(C.Function) && !isa<CXXConstructorDecl>(C.Function);
+      return {C.Function->getMinRequiredArguments()+needObj,
+              C.Function->param_size()+needObj};
     }
     int res=0;
     for (int i=0; i!=3;i++)
@@ -936,11 +959,12 @@ private:
     res.extraFailInfo=getExtraFailInfo(C);
 //    llvm::raw_string_ostream signature(res.signature);
     if (C.IsSurrogate){
-      if (C.FoundDecl.getDecl()!=0){
+      if (C.FoundDecl.getDecl()){
         res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
+      }else{
+        res.name={C.Surrogate->getNameAsString()};
       }
       res.declLocation = "Surrogate " + C.Surrogate->getLocation().printToString(S->SourceMgr);
-      res.signature={C.Surrogate->getNameAsString()};
       return res;
     }
 
@@ -1025,7 +1049,7 @@ private:
     return getTemplate(f);
   }
   QualType getThisType(const OverloadCandidate& C)const{
-    if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
+    if (const auto* mp=llvm::dyn_cast_or_null<CXXMethodDecl>(C.Function)){
       if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
         return mp->getThisType();
     }
@@ -1041,7 +1065,7 @@ private:
     }
     if (!C.Function->param_empty()){
       for (const auto& x:C.Function->parameters()){
-        res.emplace_back(std::pair{x->getType(),x->hasDefaultArg()});
+        res.emplace_back(x->getType(),x->hasDefaultArg());
       }
     }
     return res;
@@ -1060,6 +1084,8 @@ private:
       const auto&[type,isDefaulted]=types[i];
       res.push_back(type.getCanonicalType().getAsString()+(isDefaulted?"=default":""));
     }
+    if (C.Function && C.Function->getEllipsisLoc()!=SourceLocation())
+      res.push_back("...");
     return res;
   }
   std::vector<ExprValueKind> getCallKinds()const{
