@@ -12,7 +12,6 @@
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Frontend/FrontendOptions.h"
-#include "clang/Frontend/OvdlFilter.h"
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/ScopeInfo.h"
@@ -111,7 +110,6 @@ struct OvdlResEntry{
   std::string note;
   bool isImplicit=false;
 };
-//bool OvdlResEntry::extraInfoHidden=1;
 struct OvdlResNode{
   OvdlResEntry Entry;
   size_t line;
@@ -120,7 +118,6 @@ struct OvdlResNode{
 class OvdlResCont{
   std::vector<OvdlResNode> data;
 public:
-  OvdlFilterSettings filterSettings;
   using iterator=std::vector<OvdlResNode>::iterator;
   iterator begin() { return data.begin();}
   iterator end() { return data.end(); }
@@ -511,17 +508,18 @@ const QualType getToType(const ImplicitConversionSequence& C){
 QualType getToType(const OverloadCandidate& C,int idx){
   if (C.Function==nullptr)
     return getToType(C.Conversions[idx]);
-  if (0&&isa<CXXConversionDecl>(C.Function))
-    return C.FinalConversion.getToType(2);
+  if (C.Conversions[idx].getKind()==ImplicitConversionSequence::Kind::EllipsisConversion)
+    return QualType{};
+  //if (0&&isa<CXXConversionDecl>(C.Function))
+  //  return C.FinalConversion.getToType(2);
   if (isa<CXXMethodDecl>(C.Function) &&
       !isa<CXXConstructorDecl>(C.Function))
     --idx;
+    //dyn_cast<CXXMethodDecl>(C.Function);
   if (idx==-1){
     return getToType(C.Conversions[0]);//TODO:thistype
     //return llvm::dyn_cast<CXXMethodDecl>(C.Function)->getThisType();
   }
-  if (C.Conversions[idx].getKind()==ImplicitConversionSequence::Kind::EllipsisConversion)
-    return QualType{};
   return C.Function->parameters()[idx]->getType();
 }
 void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
@@ -632,7 +630,7 @@ public:
     const auto& callKinds=getCallKinds();
     if (reason==clang::betterConversion){
       Entry.deciderConversion = ConversionCompareAsString(Cand1,Cand2,infoIdx,
-        res?CompareKind::Better:CompareKind::Worse,callKinds[infoIdx]) +
+        res?CompareKind::Better:CompareKind::Worse,callKinds) +
         "    Place: "+std::to_string(infoIdx+1);
     }else if (reason==clang::badConversion){
       Entry.deciderConversion =
@@ -640,8 +638,10 @@ public:
         getToType((res?Cand2:Cand1),infoIdx).getAsString()+" is ill formated";
     }
     for (size_t i=0; i!= compareResults.size(); ++i){
+      bool isStaticCall=Set->getObjectExpr()==nullptr&&
+        (isStaticCand(Cand1) || isStaticCand(Cand2));
       Entry.conversionCompares.push_back(ConversionCompareAsString(
-            Cand1,Cand2,i,compareResults[i],callKinds[i]));
+            Cand1,Cand2,i+isStaticCall,compareResults[i],callKinds));
     }
     for (auto &E : compares) { // Removeing mirrors
       if (E.C1==Entry.C2 && E.C2==Entry.C1){
@@ -656,6 +656,9 @@ public:
     compares.push_back(Entry);
   }
 private:
+  bool isStaticCand(const OverloadCandidate& C)const {
+      return C.IgnoreObjectArgument;
+  }
   bool inSetInterval(unsigned x)const{
     if (settings.Intervals.size()==0)
       return true;
@@ -742,23 +745,40 @@ private:
 
   }
   std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
-      const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,ExprValueKind vk)const{
+      const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,
+      const std::vector<ExprValueKind>& vkarr)const{
+    /*bool isStaticCall=false;
+    if (auto *p=llvm::dyn_cast_or_null<CXXMethodDecl>(Cand1.Function)){
+      isStaticCall=p->isStatic() && Set->getObjectExpr()==nullptr&&
+                    !isa<CXXConstructorDecl>(Cand1.Function);
+    }*/
+    bool isStaticCall=Set->getObjectExpr()==nullptr&&
+        (isStaticCand(Cand1) || isStaticCand(Cand2));
+    ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
     const static char compareSigns[]{'>','=','<'};
     std::string res;
     llvm::raw_string_ostream os(res);
-    if (!Cand1.Conversions[idx].isEllipsis())
+    if (!Cand1.Conversions[idx].isInitialized())
+      os<<"Uninited";
+    else if (Cand1.Conversions[idx].isEllipsis())
+      os<<"Ellipsis";
+    else if (Cand1.Conversions[idx].isStaticObjectArgument())
+      os<<"StaticObjectArgument";
+    else
       os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
         Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString() <<
         ')';
-    else
-     os<<"Ellipsis";
     os<< '\t' << compareSigns[cmpRes + 1] << '\t';
-    if (!Cand2.Conversions[idx].isEllipsis())
+    if (!Cand2.Conversions[idx].isInitialized())
+      os<<"Uninited";
+    else if (Cand2.Conversions[idx].isEllipsis())
+      os<<"Ellipsis";
+    else if (Cand2.Conversions[idx].isStaticObjectArgument())
+      os<<"StaticObjectArgument";
+    else
       os<<'(' <<
         getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() <<
         Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ')';
-    else
-     os<<"Ellipsis";
     return res;
   }
   std::vector<OvdlCandEntry> getRelevantCands(OvdlResEntry& Entry)const{
@@ -796,7 +816,6 @@ private:
       const auto ty=nd->getAsFunction()->getCallResultType();
         //The type of the functionPtr
       const auto* fptr=ty->getAs<PointerType>()->getPointeeType()->getAs<FunctionProtoType>();
-      fptr->dump();
       int cnt=fptr->getNumParams()+1;
       return {cnt,cnt};
     }//TODO
@@ -833,7 +852,7 @@ private:
           os << toString(C.Conversions[i].Bad.Kind) <<
                  " Pos: " <<  std::to_string(i) <<  "    From: " <<
                  C.Conversions[i].Bad.getFromType().getAsString() <<
-                 Kinds[getCallKinds()[i]] << "    To: " <<
+                 Kinds[getCallKinds()[i-C.IgnoreObjectArgument]] << "    To: " <<
                  C.Conversions[i].Bad.getToType().getAsString();
           return res;
         }
@@ -864,8 +883,10 @@ private:
   std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C)const{
     std::vector<OvdlConvEntry> res;
     const auto& callKinds=getCallKinds();
+
+    bool isStaticCall=Set->getObjectExpr()==nullptr&&isStaticCand(C);
     for (size_t i=0; i<C.Conversions.size();++i){
-      const ExprValueKind fromKind=callKinds[i];
+      const ExprValueKind fromKind=(i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
       const auto& conv=C.Conversions[i];
       int idx=i;
       if (C.Function && isa<CXXMethodDecl>(C.Function) &&
@@ -946,10 +967,25 @@ private:
     auto res = getCandEntryIner(C);
     return res;
   }*/
+  std::deque<std::string> getSurrSignature(const OverloadCandidate&C) const{
+    std::deque<std::string> res;
+    const NamedDecl* nd=C.FoundDecl.getDecl();
+    while (isa<UsingShadowDecl>(nd)){
+      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
+    }
+    const auto ty=nd->getAsFunction()->getCallResultType();
+        //The type of the functionPtr
+    const auto* fptr=ty->getAs<PointerType>()->getPointeeType()->getAs<FunctionProtoType>();
+    res.emplace_back(Set->getObjectExpr()->getType().getCanonicalType().getAsString()+"=*this");
+    for (const auto& t:fptr->getParamTypes())
+      res.emplace_back(t.getCanonicalType().getAsString());
+
+    return res;
+  }
   OvdlCandEntry getCandEntry(const OverloadCandidate &C)const {
     OvdlCandEntry res;
     if (settings.ShowConversions)
-      res.Conversions=getConversions(C);
+      res.Conversions=getConversions(C);//FIXME
     else
       res.Conversions={};
     if (!C.Viable)
@@ -964,6 +1000,7 @@ private:
       }else{
         res.name={C.Surrogate->getNameAsString()};
       }
+      res.signature=getSurrSignature(C);
       res.declLocation = "Surrogate " + C.Surrogate->getLocation().printToString(S->SourceMgr);
       return res;
     }
