@@ -458,7 +458,7 @@ std::string getConversionSeq(const UserDefinedConversionSequence &cs) {
     os << " -> ";
   }
   if (cs.ConversionFunction) {
-    os << cs.ConversionFunction->getQualifiedNameAsString();
+    os <<'"'<< cs.ConversionFunction->getQualifiedNameAsString()<<'"';
   } else
     os << "aggregate initialization";
   if (cs.After.First || cs.After.Second || cs.After.Third) {
@@ -639,7 +639,7 @@ public:
     }
     for (size_t i=0; i!= compareResults.size(); ++i){
       bool isStaticCall=Set->getObjectExpr()==nullptr&&
-        (isStaticCand(Cand1) || isStaticCand(Cand2));
+        (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
       Entry.conversionCompares.push_back(ConversionCompareAsString(
             Cand1,Cand2,i+isStaticCall,compareResults[i],callKinds));
     }
@@ -656,9 +656,6 @@ public:
     compares.push_back(Entry);
   }
 private:
-  bool isStaticCand(const OverloadCandidate& C)const {
-      return C.IgnoreObjectArgument;
-  }
   bool inSetInterval(unsigned x)const{
     if (settings.Intervals.size()==0)
       return true;
@@ -753,7 +750,7 @@ private:
                     !isa<CXXConstructorDecl>(Cand1.Function);
     }*/
     bool isStaticCall=Set->getObjectExpr()==nullptr&&
-        (isStaticCand(Cand1) || isStaticCand(Cand2));
+        (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
     ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
     const static char compareSigns[]{'>','=','<'};
     std::string res;
@@ -850,7 +847,7 @@ private:
         if (!C.Conversions[i].isInitialized())continue;
         if (C.Conversions[i].isBad()){
           os << toString(C.Conversions[i].Bad.Kind) <<
-                 " Pos: " <<  std::to_string(i) <<  "    From: " <<
+                 " Pos: " <<  (1+i) <<  "    From: " <<
                  C.Conversions[i].Bad.getFromType().getAsString() <<
                  Kinds[getCallKinds()[i-C.IgnoreObjectArgument]] << "    To: " <<
                  C.Conversions[i].Bad.getToType().getAsString();
@@ -884,7 +881,7 @@ private:
     std::vector<OvdlConvEntry> res;
     const auto& callKinds=getCallKinds();
 
-    bool isStaticCall=Set->getObjectExpr()==nullptr&&isStaticCand(C);
+    bool isStaticCall=Set->getObjectExpr()==nullptr&&C.IgnoreObjectArgument;
     for (size_t i=0; i<C.Conversions.size();++i){
       const ExprValueKind fromKind=(i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
       const auto& conv=C.Conversions[i];
@@ -1219,14 +1216,20 @@ private:
     }
     for (const auto& cand:*Set){
       if (cand.Viable)
-        res.viableCandidates.push_back(getCandEntry(cand));
+        addCand(res.viableCandidates,getCandEntry(cand));
       else if (settings.ShowNonViableCands){
         const auto x=getCandEntry(cand);
         if (x.declLocation!="Built-in" || settings.ShowBuiltInNonViable)
-          res.nonViableCandidates.push_back(x);
+          addCand(res.nonViableCandidates,getCandEntry(cand));
       }
     }
     return res;
+  }
+  void addCand(std::vector<OvdlCandEntry>& v,const OvdlCandEntry& cand)const{
+    for (const auto&c:v){
+      if (c==cand) return;
+    }
+    v.emplace_back(std::move(cand));
   }
 };
 }//namespace
