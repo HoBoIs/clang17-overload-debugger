@@ -272,27 +272,26 @@ struct DeductionFailureInfo {
   /// Retrieve the diagnostic which caused this deduction failure,
   /// if any.
   PartialDiagnosticAt *getSFINAEDiagnostic();
-  const PartialDiagnosticAt *getSFINAEDiagnostic() const;
 
   /// Retrieve the template parameter this deduction failure
   /// refers to, if any.
-  TemplateParameter getTemplateParameter() const;
+  TemplateParameter getTemplateParameter();
 
   /// Retrieve the template argument list associated with this
   /// deduction failure, if any.
-  const TemplateArgumentList *getTemplateArgumentList  ()const;
+  TemplateArgumentList *getTemplateArgumentList();
 
   /// Return the first template argument this deduction failure
   /// refers to, if any.
-  const TemplateArgument *getFirstArg () const;
+  const TemplateArgument *getFirstArg();
 
   /// Return the second template argument this deduction failure
   /// refers to, if any.
-  const TemplateArgument *getSecondArg  () const;
+  const TemplateArgument *getSecondArg();
 
   /// Return the index of the call argument that this deduction
   /// failure refers to, if any.
-  std::optional<unsigned> getCallArgIndex() const;
+  std::optional<unsigned> getCallArgIndex();
 
   /// Free any memory associated with this deduction failure.
   void Destroy();

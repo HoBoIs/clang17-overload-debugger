@@ -756,18 +756,13 @@ void DeductionFailureInfo::Destroy() {
   }
 }
 
-const PartialDiagnosticAt *DeductionFailureInfo::getSFINAEDiagnostic() const{
-  if (HasDiagnostic)
-    return static_cast<const PartialDiagnosticAt*>(static_cast<const void*>(Diagnostic));
-  return nullptr;
-}
 PartialDiagnosticAt *DeductionFailureInfo::getSFINAEDiagnostic() {
   if (HasDiagnostic)
     return static_cast<PartialDiagnosticAt*>(static_cast<void*>(Diagnostic));
   return nullptr;
 }
 
-TemplateParameter DeductionFailureInfo::getTemplateParameter() const{
+TemplateParameter DeductionFailureInfo::getTemplateParameter() {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -801,7 +796,7 @@ TemplateParameter DeductionFailureInfo::getTemplateParameter() const{
   return TemplateParameter();
 }
 
-const TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList()const{
+TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList(){
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -820,13 +815,13 @@ const TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList()const
 
   case Sema::TDK_DeducedMismatch:
   case Sema::TDK_DeducedMismatchNested:
-    return static_cast<const DFIDeducedMismatchArgs*>(Data)->TemplateArgs;
+    return static_cast<DFIDeducedMismatchArgs*>(Data)->TemplateArgs;
 
   case Sema::TDK_SubstitutionFailure:
-    return static_cast<const TemplateArgumentList*>(Data);
+    return static_cast<TemplateArgumentList*>(Data);
 
   case Sema::TDK_ConstraintsNotSatisfied:
-    return static_cast<const CNSInfo*>(Data)->TemplateArgs;
+    return static_cast<CNSInfo*>(Data)->TemplateArgs;
 
   // Unhandled
   case Sema::TDK_MiscellaneousDeductionFailure:
@@ -837,7 +832,7 @@ const TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList()const
   return nullptr;
 }
 
-const TemplateArgument *DeductionFailureInfo::getFirstArg() const {
+const TemplateArgument *DeductionFailureInfo::getFirstArg() {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -869,7 +864,7 @@ const TemplateArgument *DeductionFailureInfo::getFirstArg() const {
   return nullptr;
 }
 
-const TemplateArgument *DeductionFailureInfo::getSecondArg() const {
+const TemplateArgument *DeductionFailureInfo::getSecondArg()  {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -901,7 +896,7 @@ const TemplateArgument *DeductionFailureInfo::getSecondArg() const {
   return nullptr;
 }
 
-std::optional<unsigned> DeductionFailureInfo::getCallArgIndex() const{
+std::optional<unsigned> DeductionFailureInfo::getCallArgIndex() {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_DeducedMismatch:
   case Sema::TDK_DeducedMismatchNested:
@@ -10338,7 +10333,7 @@ bool clang::isBetterOverloadCandidate(
 /// declarations visible to be ambiguous in some cases (this happens when using
 /// a modularized libstdc++).
 bool Sema::isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
-                                                  const NamedDecl *B) const{
+                                                  const NamedDecl *B) {
   auto *VA = dyn_cast_or_null<ValueDecl>(A);
   auto *VB = dyn_cast_or_null<ValueDecl>(B);
   if (!VA || !VB)

@@ -2379,7 +2379,7 @@ public:
   }
 
   /// Get the module owning an entity.
-  Module *getOwningModule(const Decl *Entity) const {
+  Module *getOwningModule(const Decl *Entity) {
     return Entity->getOwningModule();
   }
 
@@ -2500,7 +2500,7 @@ public:
   /// from different modules, and thus an ambiguity error can be downgraded to
   /// an extension warning.
   bool isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
-                                              const NamedDecl *B)const;
+                                              const NamedDecl *B);
   void diagnoseEquivalentInternalLinkageDeclarations(
       SourceLocation Loc, const NamedDecl *D,
       ArrayRef<const NamedDecl *> Equiv);
