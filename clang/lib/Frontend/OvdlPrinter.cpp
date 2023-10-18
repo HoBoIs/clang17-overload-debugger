@@ -601,6 +601,7 @@ public:
       cont.add(node);
     }
     inBestOC=false;
+    llvm::errs()<<Set->getKind()<<"\n";
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
                                       const OverloadCandidate &C1,

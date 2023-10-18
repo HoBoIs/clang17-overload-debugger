@@ -3452,7 +3452,7 @@ Sema::SpecialMemberOverloadResult Sema::LookupSpecialMember(CXXRecordDecl *RD,
   // Now we perform lookup on the name we computed earlier and do overload
   // resolution. Lookup is only performed directly into the class since there
   // will always be a (possibly implicit) declaration to shadow any others.
-  OverloadCandidateSet OCS(LookupLoc, OverloadCandidateSet::CSK_Normal,ArrayRef(Arg));
+  OverloadCandidateSet OCS(LookupLoc, OverloadCandidateSet::CSK_Normal,Arg);
   DeclContext::lookup_result R = RD->lookup(Name);
 
   if (R.empty()) {

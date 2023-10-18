@@ -6083,11 +6083,6 @@ InitializationSequence::InitializationSequence(
       FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal,Args,Kind.getRange().getEnd()) {
   InitializeFrom(S, Entity, Kind, Args, TopLevelOfInitList,
                  TreatUnavailableAsInvalid);
-  /*llvm::errs()<<Args.size()<<" ";
-  if (Args.size())
-    llvm::errs()<<(Args[0]==0)<<"\n";*/
-  //llvm::errs()<<Kind.getLocation().printToString(S.SourceMgr)<<" ";
-  //llvm::errs()<<Kind.getRange().getEnd().printToString(S.SourceMgr)<<" ";
 }
 
 /// Tries to get a FunctionDecl out of `E`. If it succeeds and we can take the
