@@ -35,6 +35,7 @@
 #include "clang/Sema/Designator.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Overload.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
@@ -51,6 +52,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -6102,7 +6104,7 @@ QualType Sema::ProduceCallSignatureHelp(Expr *Fn, ArrayRef<Expr *> Args,
   Expr *NakedFn = Fn->IgnoreParenCasts();
   // Build an overload candidate set based on the functions we find.
   SourceLocation Loc = Fn->getExprLoc();
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,Args);
+  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
 
   if (auto ULE = dyn_cast<UnresolvedLookupExpr>(NakedFn)) {
     AddOverloadedCallCandidates(ULE, ArgsWithoutDependentTypes, CandidateSet,
@@ -6303,7 +6305,7 @@ QualType Sema::ProduceConstructorSignatureHelp(QualType Type,
   // FIXME: Provide support for variadic template constructors.
 
   if (CRD) {
-    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,Args);
+    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
     for (NamedDecl *C : LookupConstructors(CRD)) {
       if (auto *FD = dyn_cast<FunctionDecl>(C)) {
         // FIXME: we can't yet provide correct signature help for initializer

@@ -13,6 +13,7 @@ enum BetterOverloadCandidateReason{
 };
 class OverloadCallback{
 public:
+  virtual void addSetInfo(const OverloadCandidateSet& Set, ArrayRef<Expr*> Args, const SourceLocation EndLoc,const Expr* ObjectExpr)=0;
   virtual bool needAllCompareInfo() const=0;
   virtual void setCompareInfo(const std::vector<ImplicitConversionSequence::CompareKind>&)=0;
   virtual ~OverloadCallback()=default;
@@ -27,6 +28,15 @@ public:
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
     const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason,int infoIdx)=0;
 };
+
+template <class OverloadCallbackPtrs>
+void addSetInfo(OverloadCallbackPtrs &Callbacks,const OverloadCandidateSet& Set,
+              ArrayRef<Expr*> Args, const SourceLocation EndLoc={},const Expr* ObjectExpr=nullptr){
+  for (auto &C : Callbacks) 
+    if (C)
+      C->addSetInfo(Set,Args,EndLoc,ObjectExpr);
+}
+
 template <class OverloadCallbackPtrs>
 void atOverloadBegin(OverloadCallbackPtrs &Callbacks,
                      const Sema &TheSema,

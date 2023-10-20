@@ -1054,10 +1054,6 @@ class Sema;
     SourceLocation Loc;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
-    llvm::SmallVector<Expr*> Args;
-    Expr* ObjectExpr=nullptr;
-    SourceLocation EndLoc;
-    
 
     constexpr static unsigned NumInlineBytes =
         24 * sizeof(ImplicitConversionSequence);
@@ -1096,23 +1092,17 @@ class Sema;
     void destroyCandidates();
 
   public:
-    const Expr* getObjectExpr()const{return ObjectExpr;}
-    const SourceLocation& getEndLoc()const{return EndLoc;}
-    void setEndLoc(const SourceLocation& El){EndLoc=El;}
-    void setObjectExpr(Expr* E){ObjectExpr=E;}
-    OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-                         ArrayRef<Expr*> Args, const SourceLocation EndLoc={}, OperatorRewriteInfo RewriteInfo = {})
-        : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args),EndLoc(EndLoc){}
     //OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-    //                     OperatorRewriteInfo RewriteInfo = {},SourceRange Sr={})//swap Sr,Rewiteinfo
-    //    : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo),Sr(Sr) {}
+    //                     ArrayRef<Expr*> Args, const SourceLocation EndLoc={}, OperatorRewriteInfo RewriteInfo = {})
+    //    : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args),EndLoc(EndLoc){}
+    OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
+                         OperatorRewriteInfo RewriteInfo = {})
+        : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}
     OverloadCandidateSet(const OverloadCandidateSet &) = delete;
     OverloadCandidateSet &operator=(const OverloadCandidateSet &) = delete;
     ~OverloadCandidateSet() { destroyCandidates(); }
 
     SourceLocation getLocation() const { return Loc; }
-    ArrayRef<Expr*> getArgs()const{return Args;}
-    void setArgs(const ArrayRef<Expr*> args){Args=llvm::SmallVector<Expr*>(args);}
     CandidateSetKind getKind() const { return Kind; }
     OperatorRewriteInfo getRewriteInfo() const { return RewriteInfo; }
 

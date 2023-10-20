@@ -1452,8 +1452,9 @@ TryUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
 
   // Attempt user-defined conversion.
   OverloadCandidateSet Conversions(From->getExprLoc(),
-                                   OverloadCandidateSet::CSK_Normal,
-                                   From,From->getEndLoc());
+                                   OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(S.OverloadInspectionCallbacks, Conversions, From,From->getEndLoc());
   switch (IsUserDefinedConversion(S, From, ToType, ICS.UserDefined,
                                   Conversions, AllowExplicit,
                                   AllowObjCConversionOnExplicit)) {
@@ -3765,8 +3766,9 @@ bool
 Sema::DiagnoseMultipleUserDefinedConversion(Expr *From, QualType ToType) {
   ImplicitConversionSequence ICS;
   OverloadCandidateSet CandidateSet(From->getExprLoc(),
-                                    OverloadCandidateSet::CSK_Normal,
-                                    From,From->getEndLoc());
+                                    OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(OverloadInspectionCallbacks, CandidateSet, From,From->getEndLoc());
   OverloadingResult OvResult =
     IsUserDefinedConversion(*this, From, ToType, ICS.UserDefined,
                             CandidateSet, AllowedExplicit::None, false);
@@ -4757,8 +4759,9 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
   auto *T2RecordDecl = cast<CXXRecordDecl>(T2->castAs<RecordType>()->getDecl());
 
   OverloadCandidateSet CandidateSet(
-      DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion,
-      Init,Init->getEndLoc());
+      DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, Init,Init->getEndLoc());
   const auto &Conversions = T2RecordDecl->getVisibleConversionFunctions();
   for (auto I = Conversions.begin(), E = Conversions.end(); I != E; ++I) {
     NamedDecl *D = *I;
@@ -6366,8 +6369,9 @@ ExprResult Sema::PerformContextualImplicitConversion(
     // If one unique T is found:
     // First, build a candidate set from the previously recorded
     // potentially viable conversions.
-    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,
-                            From,From->getEndLoc());
+    OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
+    if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, From,From->getEndLoc());
     collectViableConversionCandidates(*this, From, ToType, ViableConversions,
                                       CandidateSet);
 
@@ -9865,14 +9869,17 @@ bool clang::isBetterOverloadCandidate(
     SourceLocation Loc, OverloadCandidateSet::CandidateSetKind Kind) {
   // Define viable functions to be better candidates than non-viable
   // functions.
-  atCompareOverloadBegin(S.OverloadCallbacks,S,Loc,Cand1,Cand2);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+    atCompareOverloadBegin(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2);
   if (!Cand1.Viable){
-  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+  	  atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
                         Cand1,Cand2,false,viability);
     return false;
   }
   if (!Cand2.Viable){
-  	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+  	  atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
                         Cand1,Cand2,true,viability);
     return true;
   }
@@ -9941,11 +9948,13 @@ bool clang::isBetterOverloadCandidate(
       auto Cand1Emittable = P1 > EmitThreshold;
       auto Cand2Emittable = P2 > EmitThreshold;
       if (Cand1Emittable && !Cand2Emittable){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,CUDAEmit);
+        if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+          atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,CUDAEmit);
         return true;
       }
       if (!Cand1Emittable && Cand2Emittable){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,CUDAEmit);
+        if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+          atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,CUDAEmit);
         return false;
       }
     }
@@ -9985,7 +9994,8 @@ bool clang::isBetterOverloadCandidate(
     bool Cand2Bad = IsIllFormedConversion(Cand2.Conversions[ArgIdx]);
     if (Cand1Bad != Cand2Bad) {
       if (Cand1Bad){
-    	  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+    	  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      	  atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
             Cand1,Cand2,false,badConversion,ArgIdx);
         return false;
       }
@@ -9995,7 +10005,8 @@ bool clang::isBetterOverloadCandidate(
   }
 
   if (HasBetterConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
         Cand1,Cand2,true,badConversion,infoIdx);
     return true;
   }
@@ -10004,9 +10015,9 @@ bool clang::isBetterOverloadCandidate(
   //   A viable function F1 is defined to be a better function than another
   //   viable function F2 if for all arguments i, ICSi(F1) is not a worse
   //   conversion sequence than ICSi(F2), and then...
-  if (LLVM_UNLIKELY(!S.OverloadCallbacks.empty())){
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty())){
     bool isAny=false;
-    for (const auto& c:S.OverloadCallbacks)
+    for (const auto& c:S.OverloadInspectionCallbacks)
       isAny=isAny||c->needAllCompareInfo();
     if (isAny){
       std::vector<ImplicitConversionSequence::CompareKind> compares;
@@ -10014,7 +10025,7 @@ bool clang::isBetterOverloadCandidate(
         compares.push_back(CompareImplicitConversionSequences(S, Loc,
                                           Cand1.Conversions[ArgIdx],
                                           Cand2.Conversions[ArgIdx])); 
-      for (const auto& c:S.OverloadCallbacks)
+      for (const auto& c:S.OverloadInspectionCallbacks)
         c->setCompareInfo(compares);
     }
   }
@@ -10051,7 +10062,8 @@ bool clang::isBetterOverloadCandidate(
       }
 
       // Cand1 can't be better than Cand2.
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterConversion,ArgIdx);
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,betterConversion,ArgIdx);
       return false;
 
     case ImplicitConversionSequence::Indistinguishable:
@@ -10063,7 +10075,8 @@ bool clang::isBetterOverloadCandidate(
   //    -- for some argument j, ICSj(F1) is a better conversion sequence than
   //       ICSj(F2), or, if not that,
   if (HasBetterConversion && !HasWorseConversion){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterConversion,infoIdx);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,betterConversion,infoIdx);
     return true;
   }
 
@@ -10096,7 +10109,8 @@ bool clang::isBetterOverloadCandidate(
       return true;
     }*/
     if (Result != ImplicitConversionSequence::Indistinguishable){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
           Cand1,Cand2,Result == ImplicitConversionSequence::Better,
           betterImplicitConversion);
       return Result == ImplicitConversionSequence::Better;
@@ -10117,7 +10131,8 @@ bool clang::isBetterOverloadCandidate(
       Cand1.Function && Cand2.Function){
       if (isa<CXXConstructorDecl>(Cand1.Function) !=
           isa<CXXConstructorDecl>(Cand2.Function)){
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
+      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,
             isa<CXXConstructorDecl>(Cand1.Function),constructor);
         return isa<CXXConstructorDecl>(Cand1.Function);
       }
@@ -10130,7 +10145,8 @@ bool clang::isBetterOverloadCandidate(
   bool Cand2IsSpecialization = Cand2.Function &&
                                Cand2.Function->getPrimaryTemplate();
   if (Cand1IsSpecialization != Cand2IsSpecialization){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand2IsSpecialization,isSpecialization);
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,Cand2IsSpecialization,isSpecialization);
       return Cand2IsSpecialization;
   }
 
@@ -10146,7 +10162,8 @@ bool clang::isBetterOverloadCandidate(
                                                    : TPOC_Call,
             Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
             Cand1.isReversed() ^ Cand2.isReversed())){
-     	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
+     	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+       	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,
           BetterTemplate==Cand1.Function->getPrimaryTemplate(),moreSpecialized);
       return BetterTemplate==Cand1.Function->getPrimaryTemplate();
     }
@@ -10172,15 +10189,18 @@ bool clang::isBetterOverloadCandidate(
                                    AtLeastAsConstrained1) ||
           S.IsAtLeastAsConstrained(Function2, RC2, Function1, RC1,
                                    AtLeastAsConstrained2))
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,
+      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,
                             false,moreSpecialized);
         return false;
       if (AtLeastAsConstrained1 != AtLeastAsConstrained2)
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
             Cand1,Cand2,AtLeastAsConstrained1,moreSpecialized);
         return AtLeastAsConstrained1;
     } else if (RC1 || RC2) {
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,
+      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
             Cand1,Cand2,RC1!=nullptr,moreSpecialized);
       return RC1 != nullptr;
     }
@@ -10195,7 +10215,8 @@ bool clang::isBetterOverloadCandidate(
   bool Cand2IsInherited =
       isa_and_nonnull<ConstructorUsingShadowDecl>(Cand2.FoundDecl.getDecl());
   if (Cand1IsInherited != Cand2IsInherited){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand2IsInherited,isInherited);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,Cand2IsInherited,isInherited);
     return Cand2IsInherited;
   }
   else if (Cand1IsInherited) {
@@ -10203,11 +10224,13 @@ bool clang::isBetterOverloadCandidate(
     auto *Cand1Class = cast<CXXRecordDecl>(Cand1.Function->getDeclContext());
     auto *Cand2Class = cast<CXXRecordDecl>(Cand2.Function->getDeclContext());
     if (Cand1Class->isDerivedFrom(Cand2Class)){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,derivedFromOther);
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,derivedFromOther);
       return true;
     }
     if (Cand2Class->isDerivedFrom(Cand1Class)){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,derivedFromOther);
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,derivedFromOther);
       return false;
     }
     // Inherited from sibling base classes: still ambiguous.
@@ -10221,7 +10244,8 @@ bool clang::isBetterOverloadCandidate(
   // that comparison can never happen, because we only consider reversing for
   // the maximally-rewritten operator (== or <=>).
   if (Cand1.RewriteKind != Cand2.RewriteKind){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cand1.RewriteKind < Cand2.RewriteKind,RewriteKind);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,Cand1.RewriteKind < Cand2.RewriteKind,RewriteKind);
     return Cand1.RewriteKind < Cand2.RewriteKind;
   }
 
@@ -10232,16 +10256,19 @@ bool clang::isBetterOverloadCandidate(
     if (Guide1 && Guide2) {
       //  -- F1 is generated from a deduction-guide and F2 is not
       if (Guide1->isImplicit() != Guide2->isImplicit()){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Guide2->isImplicit(),guideImplicit);
+        if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+          atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,Guide2->isImplicit(),guideImplicit);
         return Guide2->isImplicit();
       }
       //  -- F1 is the copy deduction candidate(16.3.1.8) and F2 is not
       if (Guide1->getDeductionCandidateKind() == DeductionCandidate::Copy){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,guideCopy);
+        if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+          atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,guideCopy);
         return true;
       }
       if (Guide2->getDeductionCandidateKind() == DeductionCandidate::Copy){
-        atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,guideCopy);
+        if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+          atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,guideCopy);
         return false;
       }
 
@@ -10255,7 +10282,8 @@ bool clang::isBetterOverloadCandidate(
         bool isC2Templated = Constructor2->getTemplatedKind() !=
                              FunctionDecl::TemplatedKind::TK_NonTemplate;
         if (isC1Templated != isC2Templated){
-          atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,isC2Templated,guideCopy);
+          if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+            atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,isC2Templated,guideCopy);
           return isC2Templated;
         }
       }    
@@ -10266,7 +10294,8 @@ bool clang::isBetterOverloadCandidate(
   if (Cand1.Function && Cand2.Function) {
     Comparison Cmp = compareEnableIfAttrs(S, Cand1.Function, Cand2.Function);
     if (Cmp != Comparison::Equal){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,Cmp==Comparison::Better,enableIf);
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,Cmp==Comparison::Better,enableIf);
       return Cmp == Comparison::Better;
     }
   }
@@ -10276,18 +10305,21 @@ bool clang::isBetterOverloadCandidate(
   bool HasPS2 = Cand2.Function != nullptr &&
                 functionHasPassObjectSizeParams(Cand2.Function);
   if (HasPS1 != HasPS2){
-     atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,HasPS1,parameterObjectSize);
+     if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+       atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,HasPS1,parameterObjectSize);
      return HasPS1;
   }
 
 
   auto MV = isBetterMultiversionCandidate(Cand1, Cand2);
   if (MV == Comparison::Better){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,multiversion);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,multiversion);
     return true;
   }
   if (MV == Comparison::Worse){
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,multiversion);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,multiversion);
     return false;
   }
 
@@ -10297,7 +10329,8 @@ bool clang::isBetterOverloadCandidate(
     FunctionDecl *Caller = S.getCurFunctionDecl(/*AllowLambda=*/true);
     bool res=S.IdentifyCUDAPreference(Caller, Cand1.Function) >
            S.IdentifyCUDAPreference(Caller, Cand2.Function);
-    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,res,CUDApreference);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,res,CUDApreference);
     return res;
   }
 
@@ -10312,16 +10345,19 @@ bool clang::isBetterOverloadCandidate(
     LangAS AS2 = CD2->getMethodQualifiers().getAddressSpace();
     if (AS1 != AS2) {
       if (Qualifiers::isAddressSpaceSupersetOf(AS2, AS1)){
-  	    atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,addressSpace);
+  	    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+    	    atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,addressSpace);
         return true;
       }
       if (Qualifiers::isAddressSpaceSupersetOf(AS1, AS2)){
-      	atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,addressSpace);
+      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,addressSpace);
         return false;
       }
     }
   }
-  atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,inconclusive);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+    atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,false,inconclusive);
   return false;
 }
 
@@ -10413,7 +10449,8 @@ OverloadingResult
 OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
                                          iterator &Best) {
 
-  atOverloadBegin(S.OverloadCallbacks,S,Loc,*this);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+    atOverloadBegin(S.OverloadInspectionCallbacks,S,Loc,*this);
 
   llvm::SmallVector<OverloadCandidate *, 16> Candidates;
   std::transform(begin(), end(), std::back_inserter(Candidates),
@@ -10463,14 +10500,16 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
       // back onto a potentially unintended candidate (made worse by
       // subsuming constraints), treat this as 'no viable candidate'.
       Best = end();
-      atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_No_Viable_Function,&*Cand);
+      if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+        atOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,*this,OR_No_Viable_Function,&*Cand);
       return OR_No_Viable_Function;
     }
   }
 
   // If we didn't find any viable functions, abort.
   if (Best == end()){
-    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_No_Viable_Function,nullptr);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,*this,OR_No_Viable_Function,nullptr);
     return OR_No_Viable_Function;
   }
 
@@ -10506,20 +10545,23 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // If we found more than one best candidate, this is ambiguous.
   if (Best == end()){
-    atOverloadEnd(S.OverloadCallbacks, S, Loc, *this, OR_Ambiguous,
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atOverloadEnd(S.OverloadInspectionCallbacks, S, Loc, *this, OR_Ambiguous,
                   AmbiguotyReasons);
     return OR_Ambiguous;
   }
   // Best is the best viable function.
   if (Best->Function && Best->Function->isDeleted()){
-    atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Deleted,&*Best);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+      atOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,*this,OR_Deleted,&*Best);
     return OR_Deleted;
   }
 
   if (!EquivalentCands.empty())
     S.diagnoseEquivalentInternalLinkageDeclarations(Loc, Best->Function,
                                                     EquivalentCands);
-  atOverloadEnd(S.OverloadCallbacks,S,Loc,*this,OR_Success,&*Best);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+    atOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,*this,OR_Success,&*Best);
   return OR_Success;
 }
 
@@ -13226,7 +13268,9 @@ static bool DiagnoseTwoPhaseLookup(
     if (!R.empty()) {
       R.suppressDiagnostics();
 
-      OverloadCandidateSet Candidates(FnLoc, CSK,Args);
+      OverloadCandidateSet Candidates(FnLoc, CSK);
+      if (LLVM_UNLIKELY(!SemaRef.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+        addSetInfo(SemaRef.OverloadInspectionCallbacks, Candidates, Args);
       SemaRef.AddOverloadedCallCandidates(R, ExplicitTemplateArgs, Args,
                                           Candidates);
 
@@ -13671,7 +13715,9 @@ ExprResult Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn,
                                          bool AllowTypoCorrection,
                                          bool CalleesAddressIsTaken) {
   OverloadCandidateSet CandidateSet(Fn->getExprLoc(),
-                                    OverloadCandidateSet::CSK_Normal,Args,RParenLoc);
+                                    OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(OverloadInspectionCallbacks, CandidateSet, Args,RParenLoc);
   ExprResult result;
 
   if (buildOverloadedCallSet(S, Fn, ULE, Args, LParenLoc, &CandidateSet,
@@ -13768,7 +13814,9 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
   }
 
   // Build an empty overload set.
-  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,{Args,NumArgs});
+  OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {Args,NumArgs});
 
   // Add the candidates from the given function set.
   AddNonMemberOperatorCandidates(Fns, ArgsArray, CandidateSet);
@@ -14056,9 +14104,10 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
 
   // Build the overload set.
   OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,
-                          Args,Args[1]->getEndLoc(),
                           OverloadCandidateSet::OperatorRewriteInfo(
                             Op, OpLoc, AllowRewrittenCandidates));//???
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, Args,Args[1]->getEndLoc());
   if (DefaultedFn)
     CandidateSet.exclude(DefaultedFn);
   LookupOverloadedBinOp(CandidateSet, Op, Fns, Args, PerformADL);
@@ -14582,7 +14631,9 @@ ExprResult Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
     return ExprError();
   }
   // Build an empty overload set.
-  OverloadCandidateSet CandidateSet(LLoc, OverloadCandidateSet::CSK_Operator,Args,RLoc);
+  OverloadCandidateSet CandidateSet(LLoc, OverloadCandidateSet::CSK_Operator);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, Args,RLoc);
   //CandidateSet.setBaseType(Base->getType());
 
   // Subscript can only be overloaded as a member function.
@@ -14835,9 +14886,9 @@ ExprResult Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
                             : UnresExpr->getBase()->Classify(Context);
 
     // Add overload candidates
-    OverloadCandidateSet CandidateSet(UnresExpr->getMemberLoc(),
-                                      OverloadCandidateSet::CSK_Normal,Args,RParenLoc);
-    CandidateSet.setObjectExpr(UnresExpr);
+    OverloadCandidateSet CandidateSet(UnresExpr->getMemberLoc(), OverloadCandidateSet::CSK_Normal);
+    if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, Args,RParenLoc,UnresExpr);
 
 
     // FIXME: avoid copy.
@@ -15056,8 +15107,9 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   //  ordinary lookup of the name operator() in the context of
   //  (E).operator().
   OverloadCandidateSet CandidateSet(LParenLoc,
-                                    OverloadCandidateSet::CSK_Operator,Args,RParenLoc);
-  CandidateSet.setObjectExpr(Obj);
+                                    OverloadCandidateSet::CSK_Operator);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, Args,RParenLoc,Obj);
   DeclarationName OpName = Context.DeclarationNames.getCXXOperatorName(OO_Call);
 
   if (RequireCompleteType(LParenLoc, Object.get()->getType(),
@@ -15307,7 +15359,9 @@ Sema::BuildOverloadedArrowExpr(Scope *S, Expr *Base, SourceLocation OpLoc,
   //   overload resolution mechanism (13.3).
   DeclarationName OpName =
     Context.DeclarationNames.getCXXOperatorName(OO_Arrow);
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Operator,Base,OpLoc);
+  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Operator);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, Base,OpLoc);
 
   if (RequireCompleteType(Loc, Base->getType(),
                           diag::err_typecheck_incomplete_tag, Base))
@@ -15415,7 +15469,9 @@ ExprResult Sema::BuildLiteralOperatorCall(LookupResult &R,
   SourceLocation UDSuffixLoc = SuffixInfo.getCXXLiteralOperatorNameLoc();
 
   OverloadCandidateSet CandidateSet(UDSuffixLoc,
-                                    OverloadCandidateSet::CSK_Normal,Args,LitEndLoc);
+                                    OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, Args,LitEndLoc);
   AddNonMemberOperatorCandidates(R.asUnresolvedSet(), Args, CandidateSet,
                                  TemplateArgs);
 

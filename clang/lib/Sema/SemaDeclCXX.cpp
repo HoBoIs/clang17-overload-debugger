@@ -37,6 +37,7 @@
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
@@ -8008,10 +8009,12 @@ private:
     // we've already found there is no viable 'operator<=>' candidate (and are
     // considering synthesizing a '<=>' from '==' and '<').
     OverloadCandidateSet CandidateSet(
-        FD->getLocation(), OverloadCandidateSet::CSK_Operator,Args,{},
+        FD->getLocation(), OverloadCandidateSet::CSK_Operator,
         OverloadCandidateSet::OperatorRewriteInfo(
             OO, FD->getLocation(),
             /*AllowRewrittenCandidates=*/!SpaceshipCandidates));
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, Args);
 
     /// C++2a [class.compare.default]p1 [P2002R0]:
     ///   [...] the defaulted function itself is never a candidate for overload

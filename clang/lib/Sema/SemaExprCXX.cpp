@@ -34,6 +34,7 @@
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
@@ -2488,7 +2489,9 @@ static bool resolveAllocationOverload(
     bool &PassAlignment, FunctionDecl *&Operator,
     OverloadCandidateSet *AlignedCandidates, Expr *AlignArg, bool Diagnose) {
   OverloadCandidateSet Candidates(R.getNameLoc(),
-                                  OverloadCandidateSet::CSK_Normal,Args,Range.getEnd());
+                                  OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(S.OverloadInspectionCallbacks, Candidates, Args,Range.getEnd());
   for (LookupResult::iterator Alloc = R.begin(), AllocEnd = R.end();
        Alloc != AllocEnd; ++Alloc) {
     // Even member operator new/delete are implicitly treated as
@@ -3820,7 +3823,9 @@ static bool resolveBuiltinNewDeleteOverload(Sema &S, CallExpr *TheCall,
 
   SmallVector<Expr *, 8> Args(TheCall->arguments());
   OverloadCandidateSet Candidates(R.getNameLoc(),
-                                  OverloadCandidateSet::CSK_Normal,Args,TheCall->getEndLoc());
+                                  OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(S.OverloadInspectionCallbacks, Candidates, Args,TheCall->getEndLoc());
   for (LookupResult::iterator FnOvl = R.begin(), FnOvlEnd = R.end();
        FnOvl != FnOvlEnd; ++FnOvl) {
     // Even member operator new/delete are implicitly treated as
@@ -6220,7 +6225,9 @@ static bool FindConditionalOverload(Sema &Self, ExprResult &LHS, ExprResult &RHS
                                     SourceLocation QuestionLoc) {
   Expr *Args[2] = { LHS.get(), RHS.get() };
   OverloadCandidateSet CandidateSet(QuestionLoc,
-                                    OverloadCandidateSet::CSK_Operator,Args);
+                                    OverloadCandidateSet::CSK_Operator);
+  if (LLVM_UNLIKELY(!Self.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(Self.OverloadInspectionCallbacks, CandidateSet, Args);
   Self.AddBuiltinOperatorCandidates(OO_Conditional, QuestionLoc, Args,
                                     CandidateSet);
 

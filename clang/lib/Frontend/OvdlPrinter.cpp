@@ -31,6 +31,7 @@
 #include <numeric>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace clang;
@@ -543,7 +544,32 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   OvdlResCont cont;
   clang::FrontendOptions::OvdlSettingsType settings;
   std::vector<CompareKind> compareResults;
+  struct SetArgs{
+    const OverloadCandidateSet* Set;
+    llvm::SmallVector<Expr*> Args={};
+    const Expr* ObjectExpr=nullptr;
+    SourceLocation EndLoc={};
+  };
+  std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
 public:
+  SetArgs getSetArgs()const{
+    auto it=SetArgMap.find(Set);
+    assert(it!=SetArgMap.end() && "Set must be stored");
+    return it->second;
+  }
+  virtual void addSetInfo(const OverloadCandidateSet& Set, ArrayRef<Expr*> Args, 
+                          const SourceLocation EndLoc,const Expr* ObjectExpr)override{
+    SetArgMap[&Set].Set=&Set;
+    if (Args.size()==1 && Args[0]==nullptr){
+      Args={};
+    }
+    if (ObjectExpr)
+      SetArgMap[&Set].ObjectExpr=ObjectExpr;
+    if (!Args.empty())
+      SetArgMap[&Set].Args=llvm::SmallVector<Expr*>(Args);
+    if (EndLoc!=SourceLocation{})
+      SetArgMap[&Set].EndLoc=EndLoc;
+  };
   virtual bool needAllCompareInfo() const override{
     return settings.ShowConversions==clang::FrontendOptions::SC_Verbose &&
       inBestOC && settings.ShowCompares;
@@ -574,6 +600,8 @@ public:
       compares = {};
       return;
     }
+    if (SetArgMap.find(&set)==SetArgMap.end())
+      return;
     inBestOC = true;
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
@@ -639,7 +667,7 @@ public:
         getToType((res?Cand2:Cand1),infoIdx).getAsString()+" is ill formated";
     }
     for (size_t i=0; i!= compareResults.size(); ++i){
-      bool isStaticCall=Set->getObjectExpr()==nullptr&&
+      bool isStaticCall=SetArgMap[Set].ObjectExpr==nullptr&&
         (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
       Entry.conversionCompares.push_back(ConversionCompareAsString(
             Cand1,Cand2,i+isStaticCall,compareResults[i],callKinds));
@@ -750,7 +778,7 @@ private:
       isStaticCall=p->isStatic() && Set->getObjectExpr()==nullptr&&
                     !isa<CXXConstructorDecl>(Cand1.Function);
     }*/
-    bool isStaticCall=Set->getObjectExpr()==nullptr&&
+    bool isStaticCall=getSetArgs().ObjectExpr==nullptr&&
         (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
     ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
     const static char compareSigns[]{'>','=','<'};
@@ -882,7 +910,7 @@ private:
     std::vector<OvdlConvEntry> res;
     const auto& callKinds=getCallKinds();
 
-    bool isStaticCall=Set->getObjectExpr()==nullptr&&C.IgnoreObjectArgument;
+    bool isStaticCall=getSetArgs().ObjectExpr==nullptr&&C.IgnoreObjectArgument;
     for (size_t i=0; i<C.Conversions.size();++i){
       const ExprValueKind fromKind=(i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
       const auto& conv=C.Conversions[i];
@@ -904,7 +932,7 @@ private:
         path<<conv.Standard.getFromType().getCanonicalType().getAsString();
         path<<Kinds[fromKind];
         act.pathInfo=getConversionSeq(conv.Standard);
-        if (C.Function && idx!=-1  && !isa<clang::InitListExpr>(Set->getArgs()[idx]))
+        if (C.Function && idx!=-1  && !isa<clang::InitListExpr>(getSetArgs().Args[idx]))
           path  << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
           path << " -> " << conv.Standard.getToType(2).getCanonicalType().getAsString();
@@ -925,7 +953,7 @@ private:
             conv.UserDefined.After.Second ||
             conv.UserDefined.After.Third)
           path << " -> " << conv.UserDefined.After.getFromType().getCanonicalType().getAsString();
-        if (C.Function && idx!=-1&& !isa<clang::InitListExpr>(Set->getArgs()[idx]))
+        if (C.Function && idx!=-1&& !isa<clang::InitListExpr>(getSetArgs().Args[idx]))
           path << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
           path << " -> " << conv.UserDefined.After.getToType(2).getCanonicalType().getAsString();
@@ -974,7 +1002,7 @@ private:
     const auto ty=nd->getAsFunction()->getCallResultType();
         //The type of the functionPtr
     const auto* fptr=ty->getAs<PointerType>()->getPointeeType()->getAs<FunctionProtoType>();
-    res.emplace_back(Set->getObjectExpr()->getType().getCanonicalType().getAsString()+"=*this");
+    res.emplace_back(getSetArgs().ObjectExpr->getType().getCanonicalType().getAsString()+"=*this");
     for (const auto& t:fptr->getParamTypes())
       res.emplace_back(t.getCanonicalType().getAsString());
 
@@ -1125,13 +1153,10 @@ private:
   }
   std::vector<ExprValueKind> getCallKinds()const{
     std::vector<ExprValueKind> res;
-    if (const Expr* Oe=Set->getObjectExpr()){
+    if (const Expr* Oe=getSetArgs().ObjectExpr){
       res.push_back(Oe->getValueKind());
     }
-    auto Args=Set->getArgs();
-    if (Args.size()==1&&Args[0]==nullptr){
-      Args={};
-    }
+    auto Args=getSetArgs().Args;
     /*if (Args.size()==1&&isa<clang::InitListExpr>(Args[0])){
       Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
     }*/
@@ -1160,8 +1185,8 @@ private:
     SourceLocation endloc(Lexer::getLocForEndOfToken(
         *Loc, 0, S->getSourceManager(), S->getLangOpts()));
     CharSourceRange range;
-    ArrayRef<Expr*> Args=Set->getArgs();
-    SourceLocation endloc02=Set->getEndLoc();
+    ArrayRef<Expr*> Args=getSetArgs().Args;
+    SourceLocation endloc02=getSetArgs().EndLoc;
     //SourceRange objParamRange=Set->getObjectParamRange();
     SourceLocation begloc=*Loc;
     if (Args.size() == 1 && Args[0]==nullptr){
@@ -1197,7 +1222,7 @@ private:
     const auto& callKinds=getCallKinds();
     res.callSignature =
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
-    if (const Expr* Oe=Set->getObjectExpr()) {
+    if (const Expr* Oe=getSetArgs().ObjectExpr) {
       QualType objType;
       if (auto* UOe= llvm::dyn_cast<UnresolvedMemberExpr>(Oe))
         objType=UOe->getBaseType().getCanonicalType();
@@ -1243,6 +1268,6 @@ void OvdlDumpAction::ExecuteAction(){
   EnsureSemaIsCreated(CI, *this);
   auto x=std::make_unique<DefaultOverloadInstCallback>();
   x->setSettings(CI.getFrontendOpts().OvdlSettings);
-  CI.getSema().OverloadCallbacks.push_back(std::move(x));
+  CI.getSema().OverloadInspectionCallbacks.push_back(std::move(x));
   ASTFrontendAction::ExecuteAction();
 }

@@ -9513,8 +9513,8 @@ public:
       TemplateInstCallbacks;
 
 
-  std::vector<std::unique_ptr<OverloadCallback>>
-      OverloadCallbacks;
+  llvm::SmallVector<std::unique_ptr<OverloadCallback>,1>
+      OverloadInspectionCallbacks;
 
   /// The current index into pack expansion arguments that will be
   /// used for substitution of parameter packs.

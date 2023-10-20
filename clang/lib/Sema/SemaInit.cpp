@@ -24,6 +24,7 @@
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/SemaInternal.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/FoldingSet.h"
@@ -4293,7 +4294,8 @@ static void TryConstructorInitialization(Sema &S,
 
     // If the initializer list has no elements and T has a default constructor,
     // the first phase is omitted.
-    CandidateSet.setArgs(Args);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, Args);
     if (!(UnwrappedArgs.empty() && S.LookupDefaultConstructor(DestRecordDecl)))
       Result = ResolveConstructorOverload(S, Kind.getLocation(), Args,
                                           CandidateSet, DestType, Ctors, Best,
@@ -4309,7 +4311,8 @@ static void TryConstructorInitialization(Sema &S,
   //     elements of the initializer list.
   if (Result == OR_No_Viable_Function) {
     AsInitializerList = false;
-    CandidateSet.setArgs(UnwrappedArgs);
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, UnwrappedArgs);
     Result = ResolveConstructorOverload(S, Kind.getLocation(), UnwrappedArgs,
                                         CandidateSet, DestType, Ctors, Best,
                                         CopyInitialization, AllowExplicit,
@@ -6080,9 +6083,11 @@ InitializationSequence::InitializationSequence(
     Sema &S, const InitializedEntity &Entity, const InitializationKind &Kind,
     MultiExprArg Args, bool TopLevelOfInitList, bool TreatUnavailableAsInvalid)
     : FailedOverloadResult(OR_Success),
-      FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal,Args,Kind.getRange().getEnd()) {
+      FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal) {
   InitializeFrom(S, Entity, Kind, Args, TopLevelOfInitList,
                  TreatUnavailableAsInvalid);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(S.OverloadInspectionCallbacks, FailedCandidateSet, Args, Kind.getRange().getEnd());
 }
 
 /// Tries to get a FunctionDecl out of `E`. If it succeeds and we can take the
@@ -6770,7 +6775,9 @@ static ExprResult CopyObject(Sema &S,
   // Perform overload resolution using the class's constructors. Per
   // C++11 [dcl.init]p16, second bullet for class types, this initialization
   // is direct-initialization.
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,CurInitExpr);
+  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, CurInitExpr);
   DeclContext::lookup_result Ctors = S.LookupConstructors(Class);
 
   OverloadCandidateSet::iterator Best;
@@ -6913,7 +6920,9 @@ static void CheckCXX98CompatAccessibleCopy(Sema &S,
     return;
 
   // Find constructors which would have been considered.
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal,CurInitExpr);
+  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
+  //if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+  //  addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, CurInitExpr);
   DeclContext::lookup_result Ctors =
       S.LookupConstructors(cast<CXXRecordDecl>(Record->getDecl()));
 
@@ -10626,7 +10635,9 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
   // Since we know we're initializing a class type of a type unrelated to that
   // of the initializer, this reduces to something fairly reasonable.
   OverloadCandidateSet Candidates(Kind.getLocation(),
-                                  OverloadCandidateSet::CSK_Normal,Inits,PL?PL->getRParenLoc():SourceLocation());
+                                  OverloadCandidateSet::CSK_Normal);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    addSetInfo(OverloadInspectionCallbacks, Candidates, Inits,PL?PL->getRParenLoc():SourceLocation());
   OverloadCandidateSet::iterator Best;
 
   bool AllowExplicit = !Kind.isCopyInit() || ListInit;
