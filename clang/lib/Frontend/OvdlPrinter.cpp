@@ -16,6 +16,7 @@
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -552,11 +553,6 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   };
   std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
 public:
-  SetArgs getSetArgs()const{
-    auto it=SetArgMap.find(Set);
-    assert(it!=SetArgMap.end() && "Set must be stored");
-    return it->second;
-  }
   virtual void addSetInfo(const OverloadCandidateSet& Set, ArrayRef<Expr*> Args, 
                           const SourceLocation EndLoc,const Expr* ObjectExpr)override{
     SetArgMap[&Set].Set=&Set;
@@ -597,11 +593,11 @@ public:
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         !inSetInterval(line) ||
         (!settings.ShowEmptyOverloads && set.empty())) {
-      compares = {};
       return;
     }
     if (SetArgMap.find(&set)==SetArgMap.end())
       return;
+    compares = {};
     inBestOC = true;
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
@@ -611,13 +607,7 @@ public:
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
     node.Fname=L.getFilename();
-    if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        !inSetInterval(node.line) ||
-        (!settings.ShowEmptyOverloads && set.empty())) {
-      compares={};
-      inBestOC=false;
-      return;
-    }
+    if (!inBestOC)return;
     node.Entry=getResEntry(ovRes,BestOrProblem);
     node.Entry.compares=std::move(compares);
     compares={};
@@ -629,7 +619,6 @@ public:
       cont.add(node);
     }
     inBestOC=false;
-    llvm::errs()<<Set->getKind()<<"\n";
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
                                       const OverloadCandidate &C1,
@@ -685,6 +674,11 @@ public:
     compares.push_back(Entry);
   }
 private:
+  const SetArgs& getSetArgs()const{
+    auto it=SetArgMap.find(Set);
+    assert(it!=SetArgMap.end() && "Set must be stored");
+    return it->second;
+  }
   bool inSetInterval(unsigned x)const{
     if (settings.Intervals.size()==0)
       return true;
@@ -1166,7 +1160,7 @@ private:
     return res;
   }
   OvdlResEntry getResEntry(OverloadingResult ovres,
-                           const OverloadCandidate *BestOrProblem)const {
+                           const OverloadCandidate* BestOrProblem)const {
     OvdlResEntry res;
     res.ovRes=ovres;
     if (ovres==OR_Success) {
@@ -1174,8 +1168,12 @@ private:
       res.problems={};
     }else if (ovres==clang::OR_Ambiguous){
       res.best={};
-      res.problems = {getCandEntry(BestOrProblem[0]),
-                      getCandEntry(BestOrProblem[1])};
+      res.problems = {};
+      for (const auto& cand:*Set){
+        if (cand.Best){
+          res.problems.push_back(getCandEntry(cand));
+        }
+      }
     }else{
       res.best={};
       if (BestOrProblem)
@@ -1189,10 +1187,6 @@ private:
     SourceLocation endloc02=getSetArgs().EndLoc;
     //SourceRange objParamRange=Set->getObjectParamRange();
     SourceLocation begloc=*Loc;
-    if (Args.size() == 1 && Args[0]==nullptr){
-      //The Inplicit call after class definition
-      Args={};
-    }
     if (Args.size()==1 && isa<clang::InitListExpr>(Args[0])){
       if (Args[0]->getEndLoc()>endloc02) {endloc02=Args[0]->getEndLoc();}
       //Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();

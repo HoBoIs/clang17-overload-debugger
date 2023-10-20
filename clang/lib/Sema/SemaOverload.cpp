@@ -24,24 +24,22 @@
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/OperatorKinds.h"
 #include "clang/Basic/PartialDiagnostic.h"
-#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Overload.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/Template.h"
 #include "clang/Sema/TemplateDeduction.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
-#include "clang/Sema/OverloadCallback.h"
-#include "llvm/Support/Compiler.h"
 #include <algorithm>
 #include <cstdlib>
 #include <optional>
@@ -796,7 +794,7 @@ TemplateParameter DeductionFailureInfo::getTemplateParameter() {
   return TemplateParameter();
 }
 
-TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList(){
+TemplateArgumentList *DeductionFailureInfo::getTemplateArgumentList() {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_Success:
   case Sema::TDK_Invalid:
@@ -853,7 +851,7 @@ const TemplateArgument *DeductionFailureInfo::getFirstArg() {
   case Sema::TDK_DeducedMismatch:
   case Sema::TDK_DeducedMismatchNested:
   case Sema::TDK_NonDeducedMismatch:
-    return &static_cast<const DFIArguments*>(Data)->FirstArg;
+    return &static_cast<DFIArguments*>(Data)->FirstArg;
 
   // Unhandled
   case Sema::TDK_MiscellaneousDeductionFailure:
@@ -885,7 +883,7 @@ const TemplateArgument *DeductionFailureInfo::getSecondArg()  {
   case Sema::TDK_DeducedMismatch:
   case Sema::TDK_DeducedMismatchNested:
   case Sema::TDK_NonDeducedMismatch:
-    return &static_cast<const DFIArguments*>(Data)->SecondArg;
+    return &static_cast<DFIArguments*>(Data)->SecondArg;
 
   // Unhandled
   case Sema::TDK_MiscellaneousDeductionFailure:
@@ -900,7 +898,7 @@ std::optional<unsigned> DeductionFailureInfo::getCallArgIndex() {
   switch (static_cast<Sema::TemplateDeductionResult>(Result)) {
   case Sema::TDK_DeducedMismatch:
   case Sema::TDK_DeducedMismatchNested:
-    return static_cast<const DFIDeducedMismatchArgs*>(Data)->CallArgIndex;
+    return static_cast<DFIDeducedMismatchArgs*>(Data)->CallArgIndex;
 
   default:
     return std::nullopt;
@@ -6506,18 +6504,16 @@ void Sema::AddOverloadCandidate(
     // argument doesn't participate in overload resolution.
   }
 
-  if (!CandidateSet.isNewCandidate(Function, PO)){
+  if (!CandidateSet.isNewCandidate(Function, PO))
     return;
-  }
 
   // C++11 [class.copy]p11: [DR1402]
   //   A defaulted move constructor that is defined as deleted is ignored by
   //   overload resolution.
   CXXConstructorDecl *Constructor = dyn_cast<CXXConstructorDecl>(Function);
   if (Constructor && Constructor->isDefaulted() && Constructor->isDeleted() &&
-      Constructor->isMoveConstructor()){
+      Constructor->isMoveConstructor())
     return;
-  }
 
   // Overload resolution is always an unevaluated context.
   EnterExpressionEvaluationContext Unevaluated(
@@ -9966,7 +9962,6 @@ bool clang::isBetterOverloadCandidate(
   //      that ICS1(F) is neither better nor worse than ICS1(G) for
   //      any function G, and, symmetrically, ICS1(G) is neither
   //      better nor worse than ICS1(F).
-  int infoIdx=-2;
   unsigned StartArg = 0;
   if (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument)
     StartArg = 1;
@@ -9988,7 +9983,8 @@ bool clang::isBetterOverloadCandidate(
 
   unsigned NumArgs = Cand1.Conversions.size();
   assert(Cand2.Conversions.size() == NumArgs && "Overload candidate mismatch");
-  bool HasBetterConversion = false;
+  //bool HasBetterConversion = false;
+  int BetterConversionIndex = -1;
   for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx) {
     bool Cand1Bad = IsIllFormedConversion(Cand1.Conversions[ArgIdx]);
     bool Cand2Bad = IsIllFormedConversion(Cand2.Conversions[ArgIdx]);
@@ -9999,15 +9995,15 @@ bool clang::isBetterOverloadCandidate(
             Cand1,Cand2,false,badConversion,ArgIdx);
         return false;
       }
-      infoIdx=ArgIdx;
-      HasBetterConversion = true;
+      BetterConversionIndex=ArgIdx;
+      //HasBetterConversion = true;
     }
   }
 
-  if (HasBetterConversion){
+  if (-1!=BetterConversionIndex){
     if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
       atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
-        Cand1,Cand2,true,badConversion,infoIdx);
+        Cand1,Cand2,true,badConversion,BetterConversionIndex);
     return true;
   }
 
@@ -10036,8 +10032,8 @@ bool clang::isBetterOverloadCandidate(
                                                Cand2.Conversions[ArgIdx])) {
     case ImplicitConversionSequence::Better:
       // Cand1 has a better conversion sequence.
-      HasBetterConversion = true;
-      infoIdx=ArgIdx;
+      //HasBetterConversion = true;
+      BetterConversionIndex=ArgIdx;
       break;
 
     case ImplicitConversionSequence::Worse:
@@ -10074,9 +10070,9 @@ bool clang::isBetterOverloadCandidate(
 
   //    -- for some argument j, ICSj(F1) is a better conversion sequence than
   //       ICSj(F2), or, if not that,
-  if (HasBetterConversion && !HasWorseConversion){
+  if (-1!=BetterConversionIndex && !HasWorseConversion){
     if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
-      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,betterConversion,infoIdx);
+      atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,true,betterConversion,BetterConversionIndex);
     return true;
   }
 
@@ -10283,7 +10279,7 @@ bool clang::isBetterOverloadCandidate(
                              FunctionDecl::TemplatedKind::TK_NonTemplate;
         if (isC1Templated != isC2Templated){
           if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
-            atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,isC2Templated,guideCopy);
+            atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,isC2Templated,guideTemplated);
           return isC2Templated;
         }
       }    
@@ -10521,7 +10517,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // Make sure that this function is better than every other viable
   // function. If not, we have an ambiguity.
-  OverloadCandidate AmbiguotyReasons[2];
+  //OverloadCandidate* AmbiguotyReasons[2];
   while (!PendingBest.empty()) {
     auto *Curr = PendingBest.pop_back_val();
     for (auto *Cand : Candidates) {
@@ -10535,8 +10531,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
           Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	      }else{
-                AmbiguotyReasons[0] = *Curr;
-                AmbiguotyReasons[1] = *Cand;
+                //AmbiguotyReasons[0] = Curr;
+                //AmbiguotyReasons[1] = Cand;
                 Best = end();
         }
       }
@@ -10546,8 +10542,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   // If we found more than one best candidate, this is ambiguous.
   if (Best == end()){
     if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
-      atOverloadEnd(S.OverloadInspectionCallbacks, S, Loc, *this, OR_Ambiguous,
-                  AmbiguotyReasons);
+      atOverloadEnd(S.OverloadInspectionCallbacks, S, Loc, *this, OR_Ambiguous,nullptr);
     return OR_Ambiguous;
   }
   // Best is the best viable function.
@@ -11355,7 +11350,7 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
   case Sema::TDK_ConstraintsNotSatisfied: {
     // Format the template argument list into the argument string.
     SmallString<128> TemplateArgString;
-    const TemplateArgumentList *Args = DeductionFailure.getTemplateArgumentList();
+    TemplateArgumentList *Args = DeductionFailure.getTemplateArgumentList();
     TemplateArgString = " ";
     TemplateArgString += S.getTemplateArgumentBindingsText(
         getDescribedTemplate(Templated)->getTemplateParameters(), *Args);
@@ -11383,7 +11378,7 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
   case Sema::TDK_SubstitutionFailure: {
     // Format the template argument list into the argument string.
     SmallString<128> TemplateArgString;
-    if (const TemplateArgumentList *Args =
+    if (TemplateArgumentList *Args =
             DeductionFailure.getTemplateArgumentList()) {
       TemplateArgString = " ";
       TemplateArgString += S.getTemplateArgumentBindingsText(
@@ -11434,7 +11429,7 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
   case Sema::TDK_DeducedMismatchNested: {
     // Format the template argument list into the argument string.
     SmallString<128> TemplateArgString;
-    if (const TemplateArgumentList *Args =
+    if (TemplateArgumentList *Args =
             DeductionFailure.getTemplateArgumentList()) {
       TemplateArgString = " ";
       TemplateArgString += S.getTemplateArgumentBindingsText(
