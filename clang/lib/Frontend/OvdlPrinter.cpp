@@ -1118,22 +1118,6 @@ private:
     const FunctionDecl* f=nd->getAsFunction();
     return getTemplate(f);
   }
-  ArrayRef<ParmVarDecl *> getTemplateParams(const OverloadCandidate& C)const{
-    const NamedDecl* nd=C.FoundDecl.getDecl();
-    while (isa<UsingShadowDecl>(nd)){
-      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-    }
-    const FunctionDecl* f=nd->getAsFunction();
-    std::vector<std::string> res;
-    if (!f||!f->isTemplated() ) return {};
-    f->getTemplateInstantiationPattern();
-    return f->parameters();
-    /*for (const auto& p:lX)
-      p->isTemplated();
-    for (const auto& p:lX)
-      res.push_back(p->getNameAsString());
-    return res;*/
-  }
   std::string getSource(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
@@ -1149,6 +1133,21 @@ private:
     }
     return QualType{};
   }
+  std::vector<std::string> getTemplateParams(const OverloadCandidate& C){
+    std::vector<std::string> res;
+    if (C.Function==nullptr)
+      return {};
+    const auto *templateArgs =  C.Function->getTemplateSpecializationArgs();
+    if (auto*ptemplates=C.Function->getPrimaryTemplate()){
+      if (ptemplates->getTemplateParameters()){
+        for (size_t i=0; i<templateArgs->size();++i){
+          res.push_back((templateArgs->data()[i]).getAsType().getAsString()+" "+
+                        (ptemplates->getTemplateParameters())->asArray()[i]->getNameAsString());
+        }
+      }
+    }
+    return res;
+  };
   std::vector<std::tuple<QualType,bool,QualType>> getSignatureTypes(const OverloadCandidate& C)const{
     if (C.Function==nullptr)
       return {};
@@ -1157,15 +1156,10 @@ private:
     if (thisType!=QualType{}){
       res.emplace_back(std::tuple{thisType,false,QualType{}});
     }
-    auto tempParams=getTemplateParams(C);
     if (!C.Function->param_empty()){
       for (size_t i=0;i!=C.Function->param_size();++i){
         const auto& x=C.Function->parameters()[i];
         QualType tempTy=QualType{};
-        if (i<tempParams.size() && tempParams[i]->isTemplated()){
-          tempTy=tempParams[i]->getOriginalType();
-          //llvm::errs()<<tempParams[i]->getOriginalType().getAsString()<<"\n";
-        }
         res.emplace_back(x->getType(),x->hasDefaultArg(),tempTy);
       }
     }
