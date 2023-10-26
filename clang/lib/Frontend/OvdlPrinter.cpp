@@ -16,6 +16,7 @@
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/Sema.h"
+#include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -32,8 +33,8 @@
 #include <numeric>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace clang;
@@ -66,6 +67,7 @@ struct OvdlConvEntry{
 struct OvdlTemplateSpec{
   std::string declLocation;
   std::string source;
+  bool isExact;
   std::vector<std::string> params;
 };
 struct OvdlCandEntry{
@@ -78,6 +80,7 @@ struct OvdlCandEntry{
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
   std::vector<OvdlConvEntry> Conversions;
+  std::deque<std::string> templateParams;
   bool operator==(const OvdlCandEntry& o) const{
     return declLocation == o.declLocation && name == o.name &&
       signature == o.signature && templateSource == o.templateSource &&
@@ -212,11 +215,13 @@ template <> struct MappingTraits<OvdlTemplateSpec>{
   static void mapping(IO& io, OvdlTemplateSpec& fields){
     io.mapRequired("declLocation",fields.declLocation);
     io.mapRequired("source",fields.source);
+    io.mapRequired("IsExact",fields.isExact);
   }
 };
 template <> struct MappingTraits<OvdlCandEntry>{
   static void mapping(IO& io, OvdlCandEntry& fields){
     io.mapRequired("Name",fields.name);
+    io.mapOptional("TemplateParams",fields.templateParams);
     io.mapRequired("Signature",fields.signature);
     io.mapRequired("declLocation",fields.declLocation);
     io.mapOptional("templateSource", fields.templateSource,"");
@@ -795,21 +800,30 @@ private:
       os<<"Ellipsis";
     else if (Cand1.Conversions[idx].isStaticObjectArgument())
       os<<"StaticObjectArgument";
-    else
+    else{
       os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
-        Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString() <<
-        ')';
-    os<< '\t' << compareSigns[cmpRes + 1] << '\t';
+        Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString();
+      std::string temp=getTemplatedParamForConversion(Cand1, idx);
+      if (temp!="")
+        os<<" = "<<temp;
+      os<<')';
+    }
+    os<< "\t" << compareSigns[cmpRes + 1] << '\t';
     if (!Cand2.Conversions[idx].isInitialized())
       os<<"Uninited";
     else if (Cand2.Conversions[idx].isEllipsis())
       os<<"Ellipsis";
     else if (Cand2.Conversions[idx].isStaticObjectArgument())
       os<<"StaticObjectArgument";
-    else
+    else{
       os<<'(' <<
         getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() <<
-        Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString() << ')';
+        Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString();
+      std::string temp=getTemplatedParamForConversion(Cand2, idx);
+      if (temp!="")
+        os<<" = "<<temp;
+      os<<')';
+    }
     return res;
   }
   std::vector<OvdlCandEntry> getRelevantCands(OvdlResEntry& Entry)const{
@@ -979,6 +993,9 @@ private:
         path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString();
         break;
       }
+      std::string temp=getTemplatedParamForConversion(C, i);
+      if (temp!="")
+        path<<" = "<<temp;
     }
 
     return res;
@@ -1060,9 +1077,11 @@ private:
           res.signature=mp->getThisObjectType().getAsString()+"; ";
       }*/
       res.signature=getSignature(C);
-      res.templateSource=getTemplate(C);
-      if (res.templateSource!=""&&settings.ShowTemplateSpecs)
+      res.templateSource=getTemplateSource(C);
+      if (res.templateSource!="" && settings.ShowTemplateSpecs){
         res.templateSpecs=getSpecializations(C);
+        res.templateParams=getTemplateParams(C);
+      }
     }
     return res;
   }
@@ -1074,16 +1093,26 @@ private:
     const FunctionDecl* f=nd->getAsFunction();
     std::vector<OvdlTemplateSpec> res;
     for (const auto* x:f->getDescribedFunctionTemplate()->specializations()){
-      x->isFunctionTemplateSpecialization();
-
       if (x->getSourceRange()!=f->getSourceRange()){
         OvdlTemplateSpec entry;
+        entry.isExact=true;
         entry.declLocation=x->getLocation().printToString(S->getSourceManager());
         SourceLocation endloc(Lexer::getLocForEndOfToken(
             x->getTypeSpecEndLoc(), 0, S->getSourceManager(), S->getLangOpts()));
         CharSourceRange range=CharSourceRange::getCharRange(x->getLocation(),endloc);
         entry.source= std::string(
             Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+        const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
+        const auto genericArgs =  C.Function->getTemplateSpecializationArgs()->asArray();
+        int midx=std::min(specializedArgs.size(),genericArgs.size());
+        entry.isExact= genericArgs.size()==specializedArgs.size();
+        for(int i=0; i!=midx;++i){
+          entry.isExact=entry.isExact && specializedArgs[i].structurallyEquals(genericArgs[i]);
+        }
+        if (entry.isExact && !C.Best){
+          //WARNING TODO make an unique warning
+          S->Diags.Report(*Loc,diag::warn_unused_call)<<"Exact match ignored";
+        }
         res.push_back(entry);
       }
     }
@@ -1110,7 +1139,7 @@ private:
     return std::string(
         Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
   }
-  std::string getTemplate(const OverloadCandidate& C)const{
+  std::string getTemplateSource(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
@@ -1133,34 +1162,53 @@ private:
     }
     return QualType{};
   }
-  std::vector<std::string> getTemplateParams(const OverloadCandidate& C){
+  std::string getTemplatedParamForConversion(const OverloadCandidate& C,int i)const{
+    if (C.Function && isa<CXXMethodDecl>(C.Function) &&
+        !isa<CXXConstructorDecl>(C.Function))
+      --i;
+    const NamedDecl* nd=C.FoundDecl.getDecl();
+    while (isa<UsingShadowDecl>(nd)){
+      nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
+    }
+    const FunctionDecl* f=nd->getAsFunction();
     std::vector<std::string> res;
+    if (!f||!f->isTemplated() ) return {};
+    const auto params=f->parameters();
+    if (i<0) return{};
+    if ((unsigned)i<params.size() && params[i]->isTemplated()){
+      return params[i]->getType().getAsString();
+    }
+    return {};
+  }
+  std::deque<std::string> getTemplateParams(const OverloadCandidate& C)const{
+    std::deque<std::string> res;
     if (C.Function==nullptr)
       return {};
     const auto *templateArgs =  C.Function->getTemplateSpecializationArgs();
     if (auto*ptemplates=C.Function->getPrimaryTemplate()){
       if (ptemplates->getTemplateParameters()){
         for (size_t i=0; i<templateArgs->size();++i){
-          res.push_back((templateArgs->data()[i]).getAsType().getAsString()+" "+
-                        (ptemplates->getTemplateParameters())->asArray()[i]->getNameAsString());
+          res.push_back({});
+          llvm::raw_string_ostream os(res.back());
+          os<<ptemplates->getTemplateParameters()->asArray()[i]->getNameAsString()<<" = ";
+          templateArgs->data()[i].dump(os);
         }
       }
     }
     return res;
   };
-  std::vector<std::tuple<QualType,bool,QualType>> getSignatureTypes(const OverloadCandidate& C)const{
+  std::vector<std::tuple<QualType,bool>> getSignatureTypes(const OverloadCandidate& C)const{
     if (C.Function==nullptr)
       return {};
-    std::vector<std::tuple<QualType,bool,QualType>> res;
+    std::vector<std::tuple<QualType,bool>> res;
     QualType thisType=getThisType(C);
     if (thisType!=QualType{}){
-      res.emplace_back(std::tuple{thisType,false,QualType{}});
+      res.emplace_back(std::tuple{thisType,false});
     }
     if (!C.Function->param_empty()){
       for (size_t i=0;i!=C.Function->param_size();++i){
         const auto& x=C.Function->parameters()[i];
-        QualType tempTy=QualType{};
-        res.emplace_back(x->getType(),x->hasDefaultArg(),tempTy);
+        res.emplace_back(x->getType(),x->hasDefaultArg());
       }
     }
     return res;
@@ -1176,8 +1224,8 @@ private:
       ++i;
     }
     for (; i<types.size();i++){
-      const auto&[type,isDefaulted,templateType]=types[i];
-      res.push_back((templateType!=QualType{}?templateType.getAsString()+" = ":"")+type.getCanonicalType().getAsString()+(isDefaulted?"=default":""));
+      const auto&[type,isDefaulted]=types[i];
+      res.push_back(type.getCanonicalType().getAsString()+(isDefaulted?"=default":""));
     }
     if (C.Function && C.Function->getEllipsisLoc()!=SourceLocation())
       res.push_back("...");

@@ -202,6 +202,7 @@ LLVM_DUMP_METHOD void Type::dump(llvm::raw_ostream &OS,
 //===----------------------------------------------------------------------===//
 // Decl method implementations
 //===----------------------------------------------------------------------===//
+
 LLVM_DUMP_METHOD void Decl::dump() const { dump(llvm::errs()); }
 
 LLVM_DUMP_METHOD void Decl::dump(raw_ostream &OS, bool Deserialize,

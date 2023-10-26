@@ -9,6 +9,7 @@
 //  This file implements decl-related attribute processing.
 //
 //===----------------------------------------------------------------------===//
+
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTMutationListener.h"
@@ -46,6 +47,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <optional>
+
 using namespace clang;
 using namespace sema;
 

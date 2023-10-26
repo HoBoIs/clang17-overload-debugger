@@ -13,6 +13,7 @@
 
 #ifndef LLVM_CLANG_SEMA_OVERLOAD_H
 #define LLVM_CLANG_SEMA_OVERLOAD_H
+
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclAccessPair.h"
 #include "clang/AST/DeclBase.h"
@@ -820,7 +821,6 @@ class Sema;
 
   /// OverloadCandidate - A single candidate in an overload set (C++ 13.3).
   struct OverloadCandidate {
-     
     /// Function - The actual function that this candidate
     /// represents. When NULL, this is a built-in candidate
     /// (C++ [over.oper]) or a surrogate for a conversion to a
@@ -1092,9 +1092,6 @@ class Sema;
     void destroyCandidates();
 
   public:
-    //OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-    //                     ArrayRef<Expr*> Args, const SourceLocation EndLoc={}, OperatorRewriteInfo RewriteInfo = {})
-    //    : Loc(Loc),Kind(CSK),RewriteInfo(RewriteInfo),Args(Args),EndLoc(EndLoc){}
     OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
                          OperatorRewriteInfo RewriteInfo = {})
         : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}

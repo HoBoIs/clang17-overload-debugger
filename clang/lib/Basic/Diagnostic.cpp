@@ -39,7 +39,6 @@
 #include <utility>
 #include <vector>
 
-
 using namespace clang;
 
 const StreamingDiagnostic &clang::operator<<(const StreamingDiagnostic &DB,

@@ -10,10 +10,8 @@
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/Decl.h"
 #include "clang/Basic/FileManager.h"
-#include "clang/Basic/LangOptions.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/Module.h"
-#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Frontend/ASTConsumers.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -22,7 +20,6 @@
 #include "clang/Frontend/Utils.h"
 #include "clang/Lex/DependencyDirectivesScanner.h"
 #include "clang/Lex/HeaderSearch.h"
-#include "clang/Lex/Lexer.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/TemplateInstCallback.h"
@@ -318,8 +315,7 @@ void VerifyPCHAction::ExecuteAction() {
                   SourceLocation(),
                   ASTReader::ARR_ConfigurationMismatch);
 }
-//Delete this comment
-//
+
 namespace {
 struct TemplightEntry {
   std::string Name;

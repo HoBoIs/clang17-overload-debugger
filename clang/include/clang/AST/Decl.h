@@ -4924,6 +4924,7 @@ inline bool IsEnumDeclScoped(EnumDecl *ED) {
 static constexpr StringRef getOpenMPVariantManglingSeparatorStr() {
   return "$ompvariant";
 }
+
 } // namespace clang
 
 #endif // LLVM_CLANG_AST_DECL_H
