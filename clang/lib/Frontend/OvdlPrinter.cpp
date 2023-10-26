@@ -563,23 +563,24 @@ class DefaultOverloadInstCallback:public OverloadCallback{
     llvm::SmallVector<Expr*> Args={};
     const Expr* ObjectExpr=nullptr;
     SourceLocation EndLoc={};
+    bool valid;
   };
   std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
 public:
-  virtual void addSetInfo(const OverloadCandidateSet& Set,const ArrayRef<Expr*> Args, 
-                          const SourceLocation EndLoc,const Expr* ObjectExpr)override{
+  virtual void addSetInfo(const OverloadCandidateSet& Set,const SetInfo& S)override{
     SetArgMap[&Set].Set=&Set;
-    if (!Args.empty())
-      SetArgMap[&Set].Args=llvm::SmallVector<Expr*>(Args);
-    if (Args.size()==1 && Args[0]==nullptr){
+    SetArgMap[&Set].valid=true;
+    if (S.Args)
+      SetArgMap[&Set].Args=llvm::SmallVector<Expr*>(*S.Args);
+    if (S.Args->size()==1 && (*S.Args)[0]==nullptr){
       //NEVER any more?
       //assert(0);
       SetArgMap[&Set].Args=llvm::SmallVector<Expr*>();
     }
-    if (ObjectExpr)
-      SetArgMap[&Set].ObjectExpr=ObjectExpr;
-    if (EndLoc.isValid())
-      SetArgMap[&Set].EndLoc=EndLoc;
+    if (S.ObjectExpr)
+      SetArgMap[&Set].ObjectExpr=*S.ObjectExpr;
+    if (S.EndLoc)
+      SetArgMap[&Set].EndLoc=*S.EndLoc;
   };
   virtual bool needAllCompareInfo() const override{
     return settings.ShowConversions==clang::FrontendOptions::SC_Verbose &&
@@ -604,6 +605,9 @@ public:
     S=&s;
     Set=&set;
     Loc=loc;
+
+    if (!SetArgMap[&set].valid) return;
+    SetArgMap[&set].valid=false;
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
@@ -893,6 +897,8 @@ private:
     if (C.Function){
       //Check when deducing this is implemented FIXME
       bool needObj=isa<CXXMethodDecl>(C.Function) && !isa<CXXConstructorDecl>(C.Function);
+      if (!C.Function->getEllipsisLoc().isInvalid())
+        return {C.Function->getMinRequiredArguments()+needObj,-1};
       return {C.Function->getMinRequiredArguments()+needObj,
               C.Function->param_size()+needObj};
     }
@@ -911,8 +917,12 @@ private:
     case ovl_fail_too_few_arguments:{
       const auto &[mn,mx]=NeededArgs(C);
       os<<"Needed: "<<mn;
-      if (mn!=mx)
-        os<<".."<<mx;
+      if (mn!=mx){
+        if(mx==-1)
+          os<<"...";
+        else
+          os<<".."<<mx;
+      }
       os<<" Got: "<<getCallKinds().size();
       return res;
     }
@@ -1130,6 +1140,7 @@ private:
         CharSourceRange range=CharSourceRange::getCharRange(x->getLocation(),endloc);
         entry.source= std::string(
             Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+        if (x->getTemplateSpecializationArgs() && C.Function->getTemplateSpecializationArgs()){
         const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
         const auto genericArgs =  C.Function->getTemplateSpecializationArgs()->asArray();
         int midx=std::min(specializedArgs.size(),genericArgs.size());
@@ -1137,15 +1148,18 @@ private:
         for(int i=0; i!=midx;++i){
           entry.isExact=entry.isExact && specializedArgs[i].structurallyEquals(genericArgs[i]);
         }
+        }else 
+          entry.isExact=false;
         if (entry.isExact && !C.Best && !inCompare){
           static std::set<std::pair<SourceLocation,const FunctionDecl*>> s;
           if (!s.count(std::pair{Loc,x})){
             s.emplace(Loc,x);
             auto ID=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Warning, "Explicit specialization ignored");
-            S->Diags.Report(Loc, ID);
-            auto ID2=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "from");
+            S->Diags.Report(Loc, ID)<<sr;
+            auto ID2=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "The ignored specialization:");
             S->Diags.Report(x->getLocation(), ID2)<<x->getSourceRange();
-            S->Diags.Report(f->getLocation(), ID2)<<f->getSourceRange();
+            auto ID3=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "General declaration:");
+            S->Diags.Report(f->getLocation(), ID3)<<f->getSourceRange();
             //if ()
           }
         }
@@ -1281,9 +1295,19 @@ private:
     }
     return res;
   }
+  SourceRange sr;
   OvdlResEntry getResEntry(OverloadingResult ovres,
-                           const OverloadCandidate* BestOrProblem)const {
+                           const OverloadCandidate* BestOrProblem) {
     OvdlResEntry res;
+    ArrayRef<Expr*> Args=getSetArgs().Args;
+    sr=makeSR({
+          Loc,(Args.size()&&Args[0]?Args[0]->getBeginLoc():SourceLocation{})
+        },{
+          Loc,(Args.size()&&Args[0]?Args[0]->getEndLoc():SourceLocation{}),
+          (Args.size()&&Args.back()?Args.back()->getEndLoc():SourceLocation{}),
+          getSetArgs().EndLoc
+        });
+    
     res.ovRes=ovres;
     if (ovres==OR_Success) {
       res.best=getCandEntry(*BestOrProblem);
@@ -1292,9 +1316,8 @@ private:
       res.best={};
       res.problems = {};
       for (const auto& cand:*Set){
-        if (cand.Best){
+        if (cand.Best)
           res.problems.push_back(getCandEntry(cand));
-        }
       }
     }else{
       res.best={};
@@ -1303,14 +1326,6 @@ private:
     }
     res.callLocation=Loc.printToString(S->SourceMgr);
     CharSourceRange charRange;
-    ArrayRef<Expr*> Args=getSetArgs().Args;
-    SourceRange sr=makeSR({
-          Loc,(Args.size()&&Args[0]?Args[0]->getBeginLoc():SourceLocation{})
-        },{
-          Loc,(Args.size()&&Args[0]?Args[0]->getEndLoc():SourceLocation{}),
-          (Args.size()&&Args.back()?Args.back()->getEndLoc():SourceLocation{}),
-          getSetArgs().EndLoc
-        });
     res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() && Args[0]->getEndLoc()==sr.getEnd();
     charRange=CharSourceRange::getCharRange(sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
                                      S->getSourceManager(), S->getLangOpts()));

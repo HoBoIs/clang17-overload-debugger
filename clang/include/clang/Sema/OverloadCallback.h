@@ -1,8 +1,11 @@
 #ifndef LLVM_CLANG_SEMA_OVERLOADCALLBACK_H
 #define LLVM_CLANG_SEMA_OVERLOADCALLBACK_H
 
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/Overload.h"
+#include "llvm/ADT/ArrayRef.h"
+#include <optional>
 namespace clang{
 
 enum BetterOverloadCandidateReason{
@@ -11,9 +14,16 @@ enum BetterOverloadCandidateReason{
   derivedFromOther,RewriteKind,guideImplicit,guideCopy,guideTemplated,enableIf,
   parameterObjectSize,multiversion,CUDApreference,addressSpace,inconclusive
 };
+
+struct SetInfo{
+  std::optional<const ArrayRef<Expr*>> Args={};
+  std::optional<const SourceLocation> EndLoc={};
+  std::optional<const Expr*> ObjectExpr={};
+};
+
 class OverloadCallback{
 public:
-  virtual void addSetInfo(const OverloadCandidateSet& Set,const ArrayRef<Expr*> Args, const SourceLocation EndLoc,const Expr* ObjectExpr)=0;
+  virtual void addSetInfo(const OverloadCandidateSet& Set,const SetInfo& S)=0;
   virtual bool needAllCompareInfo() const=0;
   virtual void setCompareInfo(const std::vector<ImplicitConversionSequence::CompareKind>&)=0;
   virtual ~OverloadCallback()=default;
@@ -31,10 +41,10 @@ public:
 
 template <class OverloadCallbackPtrs>
 void addSetInfo(OverloadCallbackPtrs &Callbacks,const OverloadCandidateSet& Set,
-              const ArrayRef<Expr*> Args, const SourceLocation EndLoc={},const Expr* ObjectExpr=nullptr){
+    const SetInfo& S){
   for (auto &C : Callbacks) 
     if (C)
-      C->addSetInfo(Set,Args,EndLoc,ObjectExpr);
+      C->addSetInfo(Set,S);
 }
 
 template <class OverloadCallbackPtrs>

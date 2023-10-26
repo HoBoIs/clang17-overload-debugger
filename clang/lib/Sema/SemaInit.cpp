@@ -4295,7 +4295,7 @@ static void TryConstructorInitialization(Sema &S,
     // If the initializer list has no elements and T has a default constructor,
     // the first phase is omitted.
     if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
-      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, Args);
+      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {Args});
     if (!(UnwrappedArgs.empty() && S.LookupDefaultConstructor(DestRecordDecl)))
       Result = ResolveConstructorOverload(S, Kind.getLocation(), Args,
                                           CandidateSet, DestType, Ctors, Best,
@@ -4312,7 +4312,7 @@ static void TryConstructorInitialization(Sema &S,
   if (Result == OR_No_Viable_Function) {
     AsInitializerList = false;
     if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
-      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, UnwrappedArgs);
+      addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {UnwrappedArgs});
     Result = ResolveConstructorOverload(S, Kind.getLocation(), UnwrappedArgs,
                                         CandidateSet, DestType, Ctors, Best,
                                         CopyInitialization, AllowExplicit,
@@ -6085,7 +6085,7 @@ InitializationSequence::InitializationSequence(
     : FailedOverloadResult(OR_Success),
       FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal) {
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
-    addSetInfo(S.OverloadInspectionCallbacks, FailedCandidateSet, Args, Kind.getRange().getEnd());
+    addSetInfo(S.OverloadInspectionCallbacks, FailedCandidateSet, {Args, Kind.getRange().getEnd()});
   InitializeFrom(S, Entity, Kind, Args, TopLevelOfInitList,
                  TreatUnavailableAsInvalid);
 }
@@ -6777,7 +6777,7 @@ static ExprResult CopyObject(Sema &S,
   // is direct-initialization.
   OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, CurInitExpr);
+    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {CurInitExpr});
   DeclContext::lookup_result Ctors = S.LookupConstructors(Class);
 
   OverloadCandidateSet::iterator Best;
@@ -10637,7 +10637,7 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
   OverloadCandidateSet Candidates(Kind.getLocation(),
                                   OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(OverloadInspectionCallbacks, Candidates, Inits,PL?PL->getRParenLoc():SourceLocation());
+    addSetInfo(OverloadInspectionCallbacks, Candidates, {Inits,PL?PL->getRParenLoc():SourceLocation()});
   OverloadCandidateSet::iterator Best;
 
   bool AllowExplicit = !Kind.isCopyInit() || ListInit;
