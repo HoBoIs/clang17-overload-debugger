@@ -7,6 +7,7 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
@@ -34,6 +35,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -549,8 +551,9 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   static constexpr llvm::StringLiteral Kinds[]={"[temporary]","","&&"};
   const Sema* S=nullptr;
   bool inBestOC=false;
+  bool inCompare=false;
   const OverloadCandidateSet* Set=nullptr;
-  const SourceLocation* Loc=nullptr;
+  SourceLocation Loc={};
   std::vector<OvdlCompareEntry> compares;
   OvdlResCont cont;
   clang::FrontendOptions::OvdlSettingsType settings;
@@ -563,17 +566,19 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   };
   std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
 public:
-  virtual void addSetInfo(const OverloadCandidateSet& Set, ArrayRef<Expr*> Args, 
+  virtual void addSetInfo(const OverloadCandidateSet& Set,const ArrayRef<Expr*> Args, 
                           const SourceLocation EndLoc,const Expr* ObjectExpr)override{
     SetArgMap[&Set].Set=&Set;
+    if (!Args.empty())
+      SetArgMap[&Set].Args=llvm::SmallVector<Expr*>(Args);
     if (Args.size()==1 && Args[0]==nullptr){
-      Args={};
+      //NEVER any more?
+      //assert(0);
+      SetArgMap[&Set].Args=llvm::SmallVector<Expr*>();
     }
     if (ObjectExpr)
       SetArgMap[&Set].ObjectExpr=ObjectExpr;
-    if (!Args.empty())
-      SetArgMap[&Set].Args=llvm::SmallVector<Expr*>(Args);
-    if (EndLoc!=SourceLocation{})
+    if (EndLoc.isValid())
       SetArgMap[&Set].EndLoc=EndLoc;
   };
   virtual bool needAllCompareInfo() const override{
@@ -598,7 +603,7 @@ public:
                                const OverloadCandidateSet &set) override {
     S=&s;
     Set=&set;
-    Loc=&loc;
+    Loc=loc;
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
@@ -614,11 +619,11 @@ public:
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
         const OverloadCandidateSet& set, OverloadingResult ovRes,
         const OverloadCandidate* BestOrProblem) override{
+    if (!inBestOC)return;
     OvdlResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
     node.Fname=L.getFilename();
-    if (!inBestOC)return;
     node.Entry=getResEntry(ovRes,BestOrProblem);
     node.Entry.compares=std::move(compares);
     compares={};
@@ -633,7 +638,10 @@ public:
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
                                       const OverloadCandidate &C1,
-                                      const OverloadCandidate &C2) override {}
+                                      const OverloadCandidate &C2) override {
+    if (!inBestOC || !settings.ShowCompares) {return;}
+    inCompare=true;
+  }
   virtual void atCompareOverloadEnd(const Sema &TheSema,
                                     const SourceLocation &Loc,
                                     const OverloadCandidate &Cand1,
@@ -644,8 +652,10 @@ public:
     PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
     if (!L.isValid() ||
         (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        !inSetInterval(L.getLine()))
+        !inSetInterval(L.getLine())){
+      inCompare=false;
       return;
+    }
     OvdlCompareEntry Entry;
     Entry.C1Better=res;
     Entry.C1=getCandEntry(Cand1);
@@ -653,7 +663,7 @@ public:
     if (Entry.C1 == Entry.C2)
       return;                    // EquivalentInternalLinkageDeclaration
     for (const auto& E:compares){//Removeing duplicates
-      if (E.C1==Entry.C1 && E.C2==Entry.C2){return;}
+      if (E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
     }
     Entry.reason=toString(reason);
     const auto& callKinds=getCallKinds();
@@ -676,15 +686,31 @@ public:
       if (E.C1==Entry.C2 && E.C2==Entry.C1){
         if (!E.C1Better && Entry.C1Better){
           E=Entry;//Keep the one where C1 is better
+          inCompare=false;
           return;
         }else if (!E.C1Better && !Entry.C1Better){
           /*Ambigioty, keep both*/
-        }else return;
+        }else{ 
+          inCompare=false;
+          return;
+        }
       }
     }
     compares.push_back(Entry);
+          inCompare=false;
   }
 private:
+  SourceRange makeSR(const std::vector<SourceLocation>& begs,const std::vector<SourceLocation>& ends)const{
+    SourceLocation beg={};
+    for (const auto& x:begs){
+      if (x.isValid() && (beg.isInvalid()||x<beg))beg=x;
+    }
+    SourceLocation end={};
+    for (const auto& x:ends){
+      if (x.isValid() && (end.isInvalid() || x>end))end=x;
+    }
+    return {beg,end};
+  }
   void printHumanReadable() const {
     for (const auto& x:cont){
       x.Entry.best;
@@ -886,7 +912,7 @@ private:
       const auto &[mn,mx]=NeededArgs(C);
       os<<"Needed: "<<mn;
       if (mn!=mx)
-        os<<"-"<<mx;
+        os<<".."<<mx;
       os<<" Got: "<<getCallKinds().size();
       return res;
     }
@@ -993,9 +1019,11 @@ private:
         path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString();
         break;
       }
+      if (C.Function){
       std::string temp=getTemplatedParamForConversion(C, i);
       if (temp!="")
         path<<" = "<<temp;
+      }
     }
 
     return res;
@@ -1032,9 +1060,9 @@ private:
   }
   OvdlCandEntry getCandEntry(const OverloadCandidate &C)const {
     OvdlCandEntry res;
-    if (settings.ShowConversions)
+    if (settings.ShowConversions){
       res.Conversions=getConversions(C);//FIXME
-    else
+    }else
       res.Conversions={};
     if (!C.Viable)
       res.failKind=(OverloadFailureKind)C.FailureKind;
@@ -1109,9 +1137,17 @@ private:
         for(int i=0; i!=midx;++i){
           entry.isExact=entry.isExact && specializedArgs[i].structurallyEquals(genericArgs[i]);
         }
-        if (entry.isExact && !C.Best){
-          //WARNING TODO make an unique warning
-          S->Diags.Report(*Loc,diag::warn_unused_call)<<"Exact match ignored";
+        if (entry.isExact && !C.Best && !inCompare){
+          static std::set<std::pair<SourceLocation,const FunctionDecl*>> s;
+          if (!s.count(std::pair{Loc,x})){
+            s.emplace(Loc,x);
+            auto ID=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Warning, "Explicit specialization ignored");
+            S->Diags.Report(Loc, ID);
+            auto ID2=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "from");
+            S->Diags.Report(x->getLocation(), ID2)<<x->getSourceRange();
+            S->Diags.Report(f->getLocation(), ID2)<<f->getSourceRange();
+            //if ()
+          }
         }
         res.push_back(entry);
       }
@@ -1265,43 +1301,22 @@ private:
       if (BestOrProblem)
         res.problems={getCandEntry(*BestOrProblem)};
     }
-    res.callLocation=Loc->printToString(S->SourceMgr);
-    SourceLocation endloc(Lexer::getLocForEndOfToken(
-        *Loc, 0, S->getSourceManager(), S->getLangOpts()));
-    CharSourceRange range;
+    res.callLocation=Loc.printToString(S->SourceMgr);
+    CharSourceRange charRange;
     ArrayRef<Expr*> Args=getSetArgs().Args;
-    SourceLocation endloc02=getSetArgs().EndLoc;
-    //SourceRange objParamRange=Set->getObjectParamRange();
-    SourceLocation begloc=*Loc;
-    if (Args.size()==1 && isa<clang::InitListExpr>(Args[0])){
-      if (Args[0]->getEndLoc()>endloc02) {endloc02=Args[0]->getEndLoc();}
-      //Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
-      //res.callTypes.push_back("IL");
-    }
-    if (!Args.empty() && Args[0]!=0 && Args[0]->getBeginLoc()<begloc){
-      begloc=Args[0]->getBeginLoc();
-    }
-    if (!Args.empty()&& Args.back()!=0){
-      SourceLocation endloc1(
-          Lexer::getLocForEndOfToken(Args.back()->getEndLoc(), 0,
+    SourceRange sr=makeSR({
+          Loc,(Args.size()&&Args[0]?Args[0]->getBeginLoc():SourceLocation{})
+        },{
+          Loc,(Args.size()&&Args[0]?Args[0]->getEndLoc():SourceLocation{}),
+          (Args.size()&&Args.back()?Args.back()->getEndLoc():SourceLocation{}),
+          getSetArgs().EndLoc
+        });
+    res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() && Args[0]->getEndLoc()==sr.getEnd();
+    charRange=CharSourceRange::getCharRange(sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
                                      S->getSourceManager(), S->getLangOpts()));
-      if (endloc<endloc1) endloc=endloc1;
-    }
-    if (endloc02!=SourceLocation()){
-      SourceLocation endloc2(Lexer::getLocForEndOfToken(
-          endloc02, 0, S->getSourceManager(), S->getLangOpts()));
-      if (endloc<endloc2) endloc=endloc2;
-    }
-    range=CharSourceRange::getCharRange(begloc,endloc);
-    if (Args.size()==1 && Args[0]->getBeginLoc()==begloc){
-      SourceLocation endloc2(Lexer::getLocForEndOfToken(
-          Args[0]->getEndLoc(), 0, S->getSourceManager(), S->getLangOpts()));
-      if (endloc==endloc2)
-        res.isImplicit=true;
-    }
     const auto& callKinds=getCallKinds();
     res.callSignature =
-        Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts());
+        Lexer::getSourceText(charRange, S->getSourceManager(), S->getLangOpts());
     if (const Expr* Oe=getSetArgs().ObjectExpr) {
       QualType objType;
       if (auto* UOe= llvm::dyn_cast<UnresolvedMemberExpr>(Oe))

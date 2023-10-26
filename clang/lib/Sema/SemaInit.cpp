@@ -4294,7 +4294,7 @@ static void TryConstructorInitialization(Sema &S,
 
     // If the initializer list has no elements and T has a default constructor,
     // the first phase is omitted.
-    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
       addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, Args);
     if (!(UnwrappedArgs.empty() && S.LookupDefaultConstructor(DestRecordDecl)))
       Result = ResolveConstructorOverload(S, Kind.getLocation(), Args,
@@ -4311,7 +4311,7 @@ static void TryConstructorInitialization(Sema &S,
   //     elements of the initializer list.
   if (Result == OR_No_Viable_Function) {
     AsInitializerList = false;
-    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
       addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, UnwrappedArgs);
     Result = ResolveConstructorOverload(S, Kind.getLocation(), UnwrappedArgs,
                                         CandidateSet, DestType, Ctors, Best,
@@ -6084,10 +6084,10 @@ InitializationSequence::InitializationSequence(
     MultiExprArg Args, bool TopLevelOfInitList, bool TreatUnavailableAsInvalid)
     : FailedOverloadResult(OR_Success),
       FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal) {
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
+    addSetInfo(S.OverloadInspectionCallbacks, FailedCandidateSet, Args, Kind.getRange().getEnd());
   InitializeFrom(S, Entity, Kind, Args, TopLevelOfInitList,
                  TreatUnavailableAsInvalid);
-  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(S.OverloadInspectionCallbacks, FailedCandidateSet, Args, Kind.getRange().getEnd());
 }
 
 /// Tries to get a FunctionDecl out of `E`. If it succeeds and we can take the
