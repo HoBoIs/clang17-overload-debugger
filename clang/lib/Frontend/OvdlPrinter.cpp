@@ -563,12 +563,17 @@ class DefaultOverloadInstCallback:public OverloadCallback{
     llvm::SmallVector<Expr*> Args={};
     const Expr* ObjectExpr=nullptr;
     SourceLocation EndLoc={};
-    bool valid;
+    SourceLocation Loc={};
+    bool valid=0;
   };
   std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
 public:
   virtual void addSetInfo(const OverloadCandidateSet& Set,const SetInfo& S)override{
     SetArgMap[&Set].Set=&Set;
+    if (SetArgMap[&Set].valid && SetArgMap[&Set].Loc!=Set.getLocation()){
+      SetArgMap[&Set]={};//Reset because the info is outdated
+      SetArgMap[&Set].Set=&Set;
+    }
     SetArgMap[&Set].valid=true;
     if (S.Args)
       SetArgMap[&Set].Args=llvm::SmallVector<Expr*>(*S.Args);
@@ -581,6 +586,7 @@ public:
       SetArgMap[&Set].ObjectExpr=*S.ObjectExpr;
     if (S.EndLoc)
       SetArgMap[&Set].EndLoc=*S.EndLoc;
+    Loc=Set.getLocation();
   };
   virtual bool needAllCompareInfo() const override{
     return settings.ShowConversions==clang::FrontendOptions::SC_Verbose &&
@@ -606,8 +612,7 @@ public:
     Set=&set;
     Loc=loc;
 
-    if (!SetArgMap[&set].valid) return;
-    SetArgMap[&set].valid=false;
+    if (!SetArgMap[&set].valid || SetArgMap[&set].Loc != Set->getLocation()) return;
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
