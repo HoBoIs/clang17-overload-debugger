@@ -74,10 +74,13 @@ struct OvdlTemplateSpec{
 };
 struct OvdlCandEntry{
   std::string declLocation;
+  clang::SourceLocation declLoc;
+  std::string usingLocation;
+  clang::SourceLocation usingLoc;
   std::string name;
+  bool isSurrogate=false;
   std::deque<std::string> signature;
   std::string templateSource;
-  std::string source;
   std::vector<OvdlTemplateSpec> templateSpecs;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
@@ -90,10 +93,6 @@ struct OvdlCandEntry{
       Conversions == o.Conversions;
   }
 };
-/*struct OvdlParamCompareEntry{
-  std::string c1from,c2from;
-  std::string res;
-};*/
 struct OvdlCompareEntry {
   OvdlCandEntry C1,C2;
   std::string reason;
@@ -113,7 +112,9 @@ struct OvdlResEntry{
   std::vector<OvdlCandEntry> problems;
   std::vector<OvdlCompareEntry> compares;
   std::string callLocation;
+  SourceLocation callLoc;
   std::string callSignature;
+  clang::SourceRange callRange;
   clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
   std::string note;
@@ -226,6 +227,8 @@ template <> struct MappingTraits<OvdlCandEntry>{
     io.mapOptional("TemplateParams",fields.templateParams);
     io.mapRequired("Signature",fields.signature);
     io.mapRequired("declLocation",fields.declLocation);
+    io.mapOptional("usingLocation",fields.usingLocation,"");
+    io.mapOptional("isSurrogate",fields.isSurrogate,false);
     io.mapOptional("templateSource", fields.templateSource,"");
     //io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
     io.mapOptional("templateSpecs (overloading is decided before specialisation)", fields.templateSpecs);
@@ -312,6 +315,19 @@ std::string toString(ImplicitConversionKind e){
   case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
   }
   llvm_unreachable("Unknown ImplicitConversionKind");
+}
+std::string toString(clang::OverloadingResult r){
+  switch(r){
+  case OR_Success:
+    return "OR_Success";
+  case OR_No_Viable_Function:
+    return "OR_No_Viable_Function";
+  case OR_Ambiguous:
+    return "OR_Ambiguous";
+  case OR_Deleted:
+    return "OR_Deleted";
+  }
+  llvm_unreachable("Unknown OR");
 }
 std::string toString(Sema::TemplateDeductionResult r){
   switch (r) {
@@ -586,7 +602,7 @@ public:
       SetArgMap[&Set].ObjectExpr=*S.ObjectExpr;
     if (S.EndLoc)
       SetArgMap[&Set].EndLoc=*S.EndLoc;
-    Loc=Set.getLocation();
+    SetArgMap[&Set].Loc=Set.getLocation();
   };
   virtual bool needAllCompareInfo() const override{
     return settings.ShowConversions==clang::FrontendOptions::SC_Verbose &&
@@ -602,8 +618,10 @@ public:
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
   virtual void atEnd() override{
-    for (auto& x:cont)
+    for (auto& x:cont){
       displayOvdlResEntry(llvm::outs(),x.Entry);
+    }
+    printHumanReadable();
     cont={};
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
@@ -642,6 +660,7 @@ public:
       summarizeBuiltInBinOps(node.Entry);
     if (!node.Entry.isImplicit || settings.ShowImplicitConversions){
       cont.add(node);
+      //printResEntry(node.Entry);
     }
     inBestOC=false;
   }
@@ -720,9 +739,64 @@ private:
     }
     return {beg,end};
   }
+  void printConvEntry(const OvdlConvEntry& Entry,std::string nm="")const {
+    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
+    S->Diags.Report(ID1)<<Entry.kind<<Entry.path<<Entry.pathInfo;
+  }
+  void printCandEntry(const OvdlCandEntry& Entry,std::string nm="")const {
+    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1");
+    unsigned IDTemplate=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Template params %0");
+    unsigned IDFail=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "FailureReason %0");
+    unsigned IDFailInfo=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "FailureReason %0 %1");
+    std::string temp;
+    llvm::raw_string_ostream os(temp);
+    {os<<'[';
+    for (const auto& s:Entry.templateParams)
+      os<<s<<" ";
+    os<<']';}
+
+    S->Diags.Report(Entry.declLoc, ID1)<<nm<<Entry.name
+            <<"";
+    if (temp!="[]")
+      S->Diags.Report(IDTemplate)<<temp;
+    if (Entry.failKind){
+      if (Entry.extraFailInfo)
+        S->Diags.Report(Entry.declLoc, IDFail)<<*Entry.extraFailInfo;
+      else
+        S->Diags.Report(Entry.declLoc, IDFailInfo)<<*Entry.extraFailInfo <<*Entry.extraFailInfo;
+    }
+    for (const auto& x:Entry.Conversions){
+      printConvEntry(x);
+    }
+  }
+  void printResEntry(const OvdlResEntry& Entry)const{
+    std::string types;{
+    llvm::raw_string_ostream os(types);
+    os<<'[';
+    for (const auto& s:Entry.callTypes)
+      os<<s<<" ";
+    os<<']';
+    }
+    auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1");
+    S->Diags.Report(Entry.callLoc, ID0)<<toString(Entry.ovRes)<<types;
+              //<<Entry.callRange;
+    if (Entry.best){
+      printCandEntry(*Entry.best,"Best ");
+    }
+    for (const auto& x:Entry.viableCandidates){
+      printCandEntry(x,"Viable ");
+    }
+    for (const auto& x:Entry.nonViableCandidates){
+      printCandEntry(x,"Non viable ");
+    }
+    Entry.compares;
+    Entry.problems;
+    Entry.note;
+
+  }
   void printHumanReadable() const {
     for (const auto& x:cont){
-      x.Entry.best;
+      printResEntry(x.Entry);
     }
   }
   const SetArgs& getSetArgs()const{
@@ -1075,6 +1149,8 @@ private:
   }
   OvdlCandEntry getCandEntry(const OverloadCandidate &C)const {
     OvdlCandEntry res;
+    llvm::raw_string_ostream declLoc(res.declLocation);
+    llvm::raw_string_ostream usingLoc(res.usingLocation);
     if (settings.ShowConversions){
       res.Conversions=getConversions(C);//FIXME
     }else
@@ -1092,12 +1168,15 @@ private:
         res.name={C.Surrogate->getNameAsString()};
       }
       res.signature=getSurrSignature(C);
-      res.declLocation = "Surrogate " + C.Surrogate->getLocation().printToString(S->SourceMgr);
+      res.isSurrogate=true;
+      res.declLoc=C.Surrogate->getLocation();
+      res.declLoc.print(declLoc,S->SourceMgr);
       return res;
     }
 
     if (C.Function==nullptr) {
       res.declLocation="Built-in";
+      res.declLoc={};
       res.name="";
       if (Set->getKind()==Set->CSK_Operator){
         res.name=getBuiltInOperatorName();
@@ -1108,11 +1187,15 @@ private:
       }
       return res;
     }
-    res.declLocation = C.FoundDecl.getDecl()->getLocation().printToString(S->SourceMgr);
-    if (const auto *p = dyn_cast<UsingShadowDecl>(C.FoundDecl.getDecl()))
-      res.declLocation +=
-          "  Using from " +
-          p->getTargetDecl()->getLocation().printToString(S->SourceMgr);
+    if (const auto *p = dyn_cast<UsingShadowDecl>(C.FoundDecl.getDecl())){
+      res.declLoc=p->getTargetDecl()->getLocation();
+      res.declLoc.print(declLoc,S->SourceMgr);
+      res.usingLoc=C.FoundDecl.getDecl()->getLocation();
+      res.usingLoc.print(usingLoc,S->SourceMgr);
+    }else{
+      res.declLoc=C.FoundDecl.getDecl()->getLocation();
+      res.declLoc.print(declLoc,S->SourceMgr);
+    }
     res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
       /*if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
@@ -1139,6 +1222,7 @@ private:
       if (x->getSourceRange()!=f->getSourceRange()){
         OvdlTemplateSpec entry;
         entry.isExact=true;
+
         entry.declLocation=x->getLocation().printToString(S->getSourceManager());
         SourceLocation endloc(Lexer::getLocForEndOfToken(
             x->getTypeSpecEndLoc(), 0, S->getSourceManager(), S->getLangOpts()));
@@ -1329,11 +1413,16 @@ private:
       if (BestOrProblem)
         res.problems={getCandEntry(*BestOrProblem)};
     }
-    res.callLocation=Loc.printToString(S->SourceMgr);
+    {
+      llvm::raw_string_ostream os(res.callLocation);
+      res.callLoc=Loc;
+      Loc.print(os,S->SourceMgr);
+    }
     CharSourceRange charRange;
+    res.callRange={sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
+                                     S->getSourceManager(), S->getLangOpts())};
     res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() && Args[0]->getEndLoc()==sr.getEnd();
-    charRange=CharSourceRange::getCharRange(sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
-                                     S->getSourceManager(), S->getLangOpts()));
+    charRange=CharSourceRange::getCharRange(res.callRange);
     const auto& callKinds=getCallKinds();
     res.callSignature =
         Lexer::getSourceText(charRange, S->getSourceManager(), S->getLangOpts());

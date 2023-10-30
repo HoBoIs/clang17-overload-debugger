@@ -1453,7 +1453,7 @@ TryUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
   OverloadCandidateSet Conversions(From->getExprLoc(),
                                    OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(S.OverloadInspectionCallbacks, Conversions, {From,From->getEndLoc()});
+      addSetInfo(S.OverloadInspectionCallbacks, Conversions, {From});
   switch (IsUserDefinedConversion(S, From, ToType, ICS.UserDefined,
                                   Conversions, AllowExplicit,
                                   AllowObjCConversionOnExplicit)) {
@@ -4760,7 +4760,7 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
   OverloadCandidateSet CandidateSet(
       DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {Init,Init->getEndLoc()});
+    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {Init});
   const auto &Conversions = T2RecordDecl->getVisibleConversionFunctions();
   for (auto I = Conversions.begin(), E = Conversions.end(); I != E; ++I) {
     NamedDecl *D = *I;
@@ -14103,7 +14103,7 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
                           OverloadCandidateSet::OperatorRewriteInfo(
                             Op, OpLoc, AllowRewrittenCandidates));//???
   if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {Args,Args[1]->getEndLoc()});
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {Args});
   if (DefaultedFn)
     CandidateSet.exclude(DefaultedFn);
   LookupOverloadedBinOp(CandidateSet, Op, Fns, Args, PerformADL);
