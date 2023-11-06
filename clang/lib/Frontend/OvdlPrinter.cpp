@@ -62,6 +62,7 @@ namespace {
 struct OvdlConvEntry{
   std::string path,pathInfo;
   std::string kind;
+  SourceLocation loc;
   bool operator==(const OvdlConvEntry& o) const{
     return path==o.path && pathInfo == o.pathInfo && kind==o.kind;
   }
@@ -112,10 +113,10 @@ struct OvdlResEntry{
   std::vector<OvdlCandEntry> problems;
   std::vector<OvdlCompareEntry> compares;
   std::string callLocation;
-  SourceLocation callLoc;
   std::string callSignature;
   clang::SourceRange callRange;
   clang::OverloadingResult ovRes;
+  SourceLocation callLoc;
   std::deque<std::string> callTypes;
   std::string note;
   bool isImplicit=false;
@@ -315,6 +316,28 @@ std::string toString(ImplicitConversionKind e){
   case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
   }
   llvm_unreachable("Unknown ImplicitConversionKind");
+}
+std::string toString(clang::OverloadFailureKind r){
+  switch (r) {
+  case ovl_fail_too_many_arguments: return "ovl_fail_too_many_arguments";
+  case ovl_fail_too_few_arguments: return "ovl_fail_too_few_arguments";
+  case ovl_fail_bad_conversion: return "ovl_fail_bad_conversion";
+  case ovl_fail_bad_deduction: return "ovl_fail_bad_deduction";
+  case ovl_fail_trivial_conversion: return "ovl_fail_trivial_conversion";
+  case ovl_fail_illegal_constructor: return "ovl_fail_illegal_constructor";
+  case ovl_fail_bad_final_conversion: return "ovl_fail_bad_final_conversion";
+  case ovl_fail_final_conversion_not_exact: return "ovl_fail_final_conversion_not_exact";
+  case ovl_fail_bad_target: return "ovl_fail_bad_target";
+  case ovl_fail_enable_if: return "ovl_fail_enable_if";
+  case ovl_fail_explicit: return "ovl_fail_explicit";
+  case ovl_fail_addr_not_available: return "ovl_fail_addr_not_available";
+  case ovl_fail_inhctor_slice: return "ovl_fail_inhctor_slice";
+  case ovl_non_default_multiversion_function: return "ovl_non_default_multiversion_function";
+  case ovl_fail_object_addrspace_mismatch: return "ovl_fail_object_addrspace_mismatch";
+  case ovl_fail_constraints_not_satisfied: return "ovl_fail_constraints_not_satisfied";
+  case ovl_fail_module_mismatched: return "ovl_fail_module_mismatched";
+  }
+  llvm_unreachable("Unknown OFK");
 }
 std::string toString(clang::OverloadingResult r){
   switch(r){
@@ -741,47 +764,53 @@ private:
   }
   void printConvEntry(const OvdlConvEntry& Entry,std::string nm="")const {
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
-    S->Diags.Report(ID1)<<Entry.kind<<Entry.path<<Entry.pathInfo;
+    unsigned ID1uninited=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
+    if (Entry.path!="")
+      S->Diags.Report(Entry.loc,ID1)<<Entry.kind<<Entry.path<<Entry.pathInfo;
+    else
+      S->Diags.Report(Entry.loc,ID1uninited)<<Entry.kind;
+  }
+  template<class T>
+  std::string concat(const T& in, const std::string& sep)const{
+    std::string res;
+    if (in.empty())return res;
+    llvm::raw_string_ostream os(res);
+    os<<'[';
+    for (size_t i=0; i<in.size()-1;++i){
+      os<<in[i]<<sep;
+    }
+    os<<in.back()<<']';
+    return res;
+  }
+  void printCompareEntry(const OvdlCompareEntry& Entry,SourceLocation loc) const{
+    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Compearing candidates resulted in %0 reason: %1 %2 %3");
+    S->Diags.Report(loc,ID1)<<(Entry.C1Better?"The first is better":"The first is not better")
+                  <<(Entry.conversionCompares.empty()?"":"\n\tConversions:"+concat(Entry.conversionCompares,"\n\t"))
+                  <<Entry.reason<<(Entry.deciderConversion==""?"":"\n\tDeider: "+*Entry.deciderConversion);
+    printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better");
+    printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse");
   }
   void printCandEntry(const OvdlCandEntry& Entry,std::string nm="")const {
-    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1");
-    unsigned IDTemplate=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Template params %0");
-    unsigned IDFail=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "FailureReason %0");
-    unsigned IDFailInfo=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "FailureReason %0 %1");
-    std::string temp;
-    llvm::raw_string_ostream os(temp);
-    {os<<'[';
-    for (const auto& s:Entry.templateParams)
-      os<<s<<" ";
-    os<<']';}
-
+    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1 %2 %3 %4");
+    std::string temp=concat(Entry.templateParams,", ");
     S->Diags.Report(Entry.declLoc, ID1)<<nm<<Entry.name
-            <<"";
-    if (temp!="[]")
-      S->Diags.Report(IDTemplate)<<temp;
-    if (Entry.failKind){
-      if (Entry.extraFailInfo)
-        S->Diags.Report(Entry.declLoc, IDFail)<<*Entry.extraFailInfo;
-      else
-        S->Diags.Report(Entry.declLoc, IDFailInfo)<<*Entry.extraFailInfo <<*Entry.extraFailInfo;
-    }
+            <<(temp=="[]"?"":"\n\tTemplate params: "+temp)
+            <<(Entry.failKind?"\n\tFailure reason: "+toString(*Entry.failKind):"")
+            <<(Entry.extraFailInfo?*Entry.extraFailInfo:"");
     for (const auto& x:Entry.Conversions){
       printConvEntry(x);
     }
   }
   void printResEntry(const OvdlResEntry& Entry)const{
-    std::string types;{
-    llvm::raw_string_ostream os(types);
-    os<<'[';
-    for (const auto& s:Entry.callTypes)
-      os<<s<<" ";
-    os<<']';
-    }
-    auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1");
-    S->Diags.Report(Entry.callLoc, ID0)<<toString(Entry.ovRes)<<types;
-              //<<Entry.callRange;
+    std::string types=concat(Entry.callTypes,", ");
+    auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
+    S->Diags.Report(Entry.callLoc, ID0)<<toString(Entry.ovRes)<<types<<Entry.note
+              <<Entry.callRange;
     if (Entry.best){
       printCandEntry(*Entry.best,"Best ");
+    }
+    for (const auto& x:Entry.problems){
+      printCandEntry(x,Entry.ovRes==clang::OR_Ambiguous?"Ambigius ":"Unresolvable ");//OR unresolvable concept
     }
     for (const auto& x:Entry.viableCandidates){
       printCandEntry(x,"Viable ");
@@ -789,10 +818,10 @@ private:
     for (const auto& x:Entry.nonViableCandidates){
       printCandEntry(x,"Non viable ");
     }
-    Entry.compares;
-    Entry.problems;
-    Entry.note;
-
+    for (const auto& x:Entry.compares){
+      printCompareEntry(x,Entry.callLoc);
+    }
+    //Entry.note;
   }
   void printHumanReadable() const {
     for (const auto& x:cont){
@@ -884,7 +913,7 @@ private:
           --i;
         }
       }
-      E.note+="There are more viable built in functions, with the calltypes combined from "+
+      E.note+="\nThere are more viable built in functions, with the calltypes combined from "+
         c->first+" and "+c->second+" you can list them with \"ShowBuiltInBinOps\"";
     }
 
@@ -1053,6 +1082,10 @@ private:
           !isa<CXXConstructorDecl>(C.Function))
         --idx;
       res.push_back({});
+      if (idx>=0)
+        res.back().loc=SetArgMap.find(Set)->second.Args[idx]->getExprLoc();
+      else if (SetArgMap.find(Set)->second.ObjectExpr)
+        res.back().loc=SetArgMap.find(Set)->second.ObjectExpr->getExprLoc();
       auto& act=res.back();
       if (!conv.isInitialized()){
         act.kind="Not initialized";
@@ -1066,6 +1099,7 @@ private:
         path<<conv.Standard.getFromType().getCanonicalType().getAsString();
         path<<Kinds[fromKind];
         act.pathInfo=getConversionSeq(conv.Standard);
+//C.Function->parameters()[idx]->getLocation();
         if (C.Function && idx!=-1  && !isa<clang::InitListExpr>(getSetArgs().Args[idx]))
           path  << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
         else
@@ -1419,10 +1453,11 @@ private:
       Loc.print(os,S->SourceMgr);
     }
     CharSourceRange charRange;
-    res.callRange={sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
-                                     S->getSourceManager(), S->getLangOpts())};
     res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() && Args[0]->getEndLoc()==sr.getEnd();
-    charRange=CharSourceRange::getCharRange(res.callRange);
+    charRange=CharSourceRange::getCharRange(sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
+                                     S->getSourceManager(), S->getLangOpts()));
+    res.callRange={sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 1,
+                                     S->getSourceManager(), S->getLangOpts())};
     const auto& callKinds=getCallKinds();
     res.callSignature =
         Lexer::getSourceText(charRange, S->getSourceManager(), S->getLangOpts());
