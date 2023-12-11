@@ -59,17 +59,27 @@ void EnsureSemaIsCreated(CompilerInstance &CI, FrontendAction &Action) {
 } // namespace
 
 namespace {
+struct OvdlSource{
+  SourceRange range;
+  SourceLocation exprLoc;
+  std::string source;
+  std::string sourceLoc;
+  bool operator==(const OvdlSource& o)const{
+    return range==o.range && source==o.source;
+  };
+};
 struct OvdlConvEntry{
   std::string path,pathInfo;
   std::string kind;
-  SourceRange range;
+  OvdlSource src;
   bool operator==(const OvdlConvEntry& o) const{
     return path==o.path && pathInfo == o.pathInfo && kind==o.kind;
   }
 };
 struct OvdlTemplateSpec{
-  std::string declLocation;
-  std::string source;
+  //std::string declLocation;
+  //std::string source;
+  OvdlSource src;
   bool isExact;
   std::vector<std::string> params;
 };
@@ -81,8 +91,7 @@ struct OvdlCandEntry{
   std::string name;
   bool isSurrogate=false;
   std::deque<std::string> signature;
-  std::string source;
-  SourceRange sr;
+  OvdlSource src;
   std::vector<OvdlTemplateSpec> templateSpecs;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
@@ -90,7 +99,7 @@ struct OvdlCandEntry{
   std::deque<std::string> templateParams;
   bool operator==(const OvdlCandEntry& o) const{
     return declLocation == o.declLocation && name == o.name &&
-      signature == o.signature && source == o.source &&
+      signature == o.signature && src == o.src &&
       failKind == o.failKind && extraFailInfo == o.extraFailInfo &&
       Conversions == o.Conversions;
   }
@@ -113,11 +122,8 @@ struct OvdlResEntry{
   std::optional<OvdlCandEntry> best;
   std::vector<OvdlCandEntry> problems;
   std::vector<OvdlCompareEntry> compares;
-  std::string callLocation;
-  std::string callSignature;
-  clang::SourceRange callRange;
+  OvdlSource callSrc;
   clang::OverloadingResult ovRes;
-  SourceLocation callLoc;
   std::deque<std::string> callTypes;
   std::string note;
   bool isImplicit=false;
@@ -218,8 +224,8 @@ template <> struct MappingTraits<OvdlConvEntry>{
 };
 template <> struct MappingTraits<OvdlTemplateSpec>{
   static void mapping(IO& io, OvdlTemplateSpec& fields){
-    io.mapRequired("declLocation",fields.declLocation);
-    io.mapRequired("source",fields.source);
+    io.mapRequired("declLocation",fields.src.sourceLoc);
+    io.mapRequired("source",fields.src.source);
     io.mapRequired("IsExact",fields.isExact);
   }
 };
@@ -231,7 +237,7 @@ template <> struct MappingTraits<OvdlCandEntry>{
     io.mapRequired("declLocation",fields.declLocation);
     io.mapOptional("usingLocation",fields.usingLocation,"");
     io.mapOptional("isSurrogate",fields.isSurrogate,false);
-    io.mapOptional("source", fields.source,"");
+    io.mapOptional("source", fields.src.source,"");
     //io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
     io.mapOptional("templateSpecs (overloading is decided before specialisation)", fields.templateSpecs);
     io.mapOptional("Conversions", fields.Conversions);
@@ -262,8 +268,8 @@ template <> struct MappingTraits<OvdlCompareEntry>{
 };
 template <> struct MappingTraits<OvdlResEntry>{
   static void mapping(IO& io, OvdlResEntry& fields){
-    io.mapRequired("callLocation",fields.callLocation);
-    io.mapRequired("callSignature",fields.callSignature);
+    io.mapRequired("callLocation",fields.callSrc.sourceLoc);
+    io.mapRequired("callSignature",fields.callSrc.source);
     io.mapRequired("callTypes",fields.callTypes);
     io.mapRequired("overloading result",fields.ovRes);
     io.mapRequired("viable candidates",fields.viableCandidates);
@@ -767,9 +773,9 @@ private:
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
     unsigned ID1uninited=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
     if (Entry.path!="")
-      S->Diags.Report(Entry.range.getBegin(),ID1)<<Entry.kind<<Entry.path<<Entry.pathInfo<<Entry.range;
+      S->Diags.Report(Entry.src.range.getBegin(),ID1)<<Entry.kind<<Entry.path<<Entry.pathInfo<<Entry.src.range;
     else
-      S->Diags.Report(Entry.range.getBegin(),ID1uninited)<<Entry.kind<<Entry.range;
+      S->Diags.Report(Entry.src.range.getBegin(),ID1uninited)<<Entry.kind<<Entry.src.range;
   }
   template<class T>
   std::string concat(const T& in, const std::string& sep)const{
@@ -798,7 +804,7 @@ private:
             <<(temp==""?"":"\n\tTemplate params: "+temp)
             <<(Entry.failKind?"\n\tFailure reason: "+toString(*Entry.failKind):"")
             <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")
-            <<Entry.sr;
+            <<Entry.src.range;
     for (const auto& x:Entry.Conversions){
       printConvEntry(x);
     }
@@ -806,8 +812,8 @@ private:
   void printResEntry(const OvdlResEntry& Entry)const{
     std::string types=concat(Entry.callTypes,", ");
     auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
-    S->Diags.Report(Entry.callLoc, ID0)<<toString(Entry.ovRes)<<types<<Entry.note
-              <<Entry.callRange;
+    S->Diags.Report(Entry.callSrc.exprLoc, ID0)<<toString(Entry.ovRes)<<types<<Entry.note
+              <<Entry.callSrc.range;
     if (Entry.best){
       printCandEntry(*Entry.best,"Best ");
     }
@@ -821,9 +827,9 @@ private:
       printCandEntry(x,"Non viable ");
     }
     for (const auto& x:Entry.compares){
-      printCompareEntry(x,Entry.callLoc);
+      printCompareEntry(x,Entry.callSrc.exprLoc);
     }
-    //Entry.note;
+    //Entry.note;;
   }
   void printHumanReadable() const {
     for (const auto& x:cont){
@@ -1071,6 +1077,15 @@ private:
     }
     return {};
   }
+
+  OvdlSource getSrcFromExpr(const Expr* e)const{
+    OvdlSource res=getSrc(e->getSourceRange());
+    //res.range=e->getSourceRange();
+    res.exprLoc=e->getExprLoc();
+    //res.sourceLoc=res.range.getBegin().printToString(S->getSourceManager());
+    //res.source=;
+    return res;
+  };
   std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C)const{
     std::vector<OvdlConvEntry> res;
     const auto& callKinds=getCallKinds();
@@ -1080,25 +1095,45 @@ private:
       const ExprValueKind fromKind=(i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
       const auto& conv=C.Conversions[i];
       int idx=i;
+
       if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
-          !isa<CXXConstructorDecl>(C.Function))||C.IsSurrogate)
+          !isa<CXXConstructorDecl>(C.Function) 
+          /*&& SetArgMap.find(Set)->second.ObjectExpr*/)||
+          C.IsSurrogate)
         --idx;
+      llvm::errs()<<i<<"=i "<<idx<<"=idx ";
       res.push_back({});
       if (idx>=0){
-        res.back().range={SetArgMap.find(Set)->second.Args[idx]->getExprLoc(),SetArgMap.find(Set)->second.Args[idx]->getEndLoc()};
+        //res.back().src.range={SetArgMap.find(Set)->second.Args[idx]->getBeginLoc(),SetArgMap.find(Set)->second.Args[idx]->getEndLoc()};
+        res.back().src=getSrcFromExpr(SetArgMap.find(Set)->second.Args[idx]);
+        llvm::errs()<<idx<<" - - ";
+        if (idx){
+
+        llvm::errs()<<SetArgMap.find(Set)->second.Args.size()<<"    ";
+        for (const auto& x:SetArgMap.find(Set)->second.Args){
+          llvm::errs()<<getSrcFromExpr(x).source<<" ";
+        }
+        llvm::errs()<<"-T\n";
+        }
       }
       else if (SetArgMap.find(Set)->second.ObjectExpr){
         //res.back().range={SetArgMap.find(Set)->second.ObjectExpr->getExprLoc(),SetArgMap.find(Set)->second.ObjectExpr->getEndLoc()};
         //res.back().range={SetArgMap.find(Set)->second.ObjectExpr->getBeginLoc(),SetArgMap.find(Set)->second.ObjectExpr->getEndLoc()};
         if (const auto *oe=dyn_cast<UnresolvedMemberExpr>(SetArgMap.find(Set)->second.ObjectExpr)){
           if (oe->isImplicitAccess())
-            res.back().range={oe->getBeginLoc(),oe->getBeginLoc()};
+            res.back().src=getSrc({oe->getBeginLoc(),oe->getBeginLoc()});
           else
-            res.back().range={oe->getBase()->getBeginLoc(),oe->getBase()->getEndLoc()};
+            res.back().src=getSrc({oe->getBase()->getBeginLoc(),oe->getBase()->getEndLoc()});
         }else
-          res.back().range={SetArgMap.find(Set)->second.ObjectExpr->getBeginLoc(),SetArgMap.find(Set)->second.ObjectExpr->getEndLoc()};
-      } else
-        res.back().range={SetArgMap.find(Set)->second.Loc};
+          res.back().src=getSrc({SetArgMap.find(Set)->second.ObjectExpr->getBeginLoc(),SetArgMap.find(Set)->second.ObjectExpr->getEndLoc()});
+      } else{
+        llvm::errs()<<SetArgMap.find(Set)->second.Args.size()<<"    ";
+        for (const auto& x:SetArgMap.find(Set)->second.Args){
+          llvm::errs()<<getSrcFromExpr(x).source<<" ";
+        }
+        llvm::errs()<<"\n";
+        res.back().src.range={SetArgMap.find(Set)->second.Loc};
+      }
       auto& act=res.back();
       if (!conv.isInitialized()){
         act.kind="Not initialized";
@@ -1252,9 +1287,7 @@ private:
           res.signature=mp->getThisObjectType().getAsString()+"; ";
       }*/
       res.signature=getSignature(C);
-      const auto tmp=getSource(C);
-      res.source=tmp.first;
-      res.sr=tmp.second;
+      res.src=getSource(C);
       if (isTemplatedFun(C) && settings.ShowTemplateSpecs){
         res.templateSpecs=getSpecializations(C);
         res.templateParams=getTemplateParams(C);
@@ -1273,13 +1306,7 @@ private:
       if (x->getSourceRange()!=f->getSourceRange()){
         OvdlTemplateSpec entry;
         entry.isExact=true;
-
-        entry.declLocation=x->getLocation().printToString(S->getSourceManager());
-        SourceLocation endloc(Lexer::getLocForEndOfToken(
-            x->getTypeSpecEndLoc(), 0, S->getSourceManager(), S->getLangOpts()));
-        CharSourceRange range=CharSourceRange::getCharRange(x->getLocation(),endloc);
-        entry.source= std::string(
-            Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts()));
+        entry.src=getSrc({x->getLocation(),x->getTypeSpecEndLoc()});
         if (x->getTemplateSpecializationArgs() && C.Function->getTemplateSpecializationArgs()){
         const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
         const auto genericArgs =  C.Function->getTemplateSpecializationArgs()->asArray();
@@ -1308,18 +1335,25 @@ private:
     }
     return res;
   }
-  std::pair<std::string,SourceRange> getNonTemplateSrc(const FunctionDecl* f)const{
-    SourceRange r=f->getSourceRange();
-    r.setEnd(f->getTypeSpecEndLoc());
+  OvdlSource getSrc(const SourceRange& r)const{
+    OvdlSource res;
     SourceLocation endloc(Lexer::getLocForEndOfToken(
         r.getEnd(), 0, S->getSourceManager(), S->getLangOpts()));
     SourceLocation endloc2(Lexer::getLocForEndOfToken(
         r.getEnd(), 1, S->getSourceManager(), S->getLangOpts()));
-    CharSourceRange range=CharSourceRange::getCharRange(r.getBegin(),endloc);
-    return {std::string(
-        Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts())),{r.getBegin(),endloc2}};
+    CharSourceRange crange=CharSourceRange::getCharRange(r.getBegin(),endloc);
+    res.range={r.getBegin(),endloc2};
+    res.source=Lexer::getSourceText(crange, S->getSourceManager(), S->getLangOpts());
+    res.sourceLoc=r.getBegin().printToString(S->getSourceManager());
+    return res;
   }
-  std::pair<std::string,SourceRange> getTemplateSrc(const FunctionDecl* f)const{
+
+  OvdlSource getNonTemplateSrc(const FunctionDecl* f)const{
+    SourceRange r=f->getSourceRange();
+    r.setEnd(f->getTypeSpecEndLoc());
+    return getSrc(r);
+  }
+  OvdlSource getTemplateSrc(const FunctionDecl* f)const{
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
     r.setEnd(f->getTypeSpecEndLoc());
@@ -1333,13 +1367,7 @@ private:
     }
     if (l0>r.getEnd())
       r.setEnd(l0);
-    SourceLocation endloc(Lexer::getLocForEndOfToken(
-        r.getEnd(), 0, S->getSourceManager(), S->getLangOpts()));
-    SourceLocation endloc2(Lexer::getLocForEndOfToken(
-        r.getEnd(), 1, S->getSourceManager(), S->getLangOpts()));
-    CharSourceRange range=CharSourceRange::getCharRange(r.getBegin(),endloc);
-    return {std::string(
-        Lexer::getSourceText(range, S->getSourceManager(), S->getLangOpts())),{r.getBegin(),endloc2}};
+    return getSrc(r);
   }
   bool isTemplatedFun(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
@@ -1349,14 +1377,14 @@ private:
     const FunctionDecl* f=nd->getAsFunction();
     return f&&f->isTemplated();
   }
-  std::pair<std::string,SourceRange> getSource(const OverloadCandidate& C)const{
+  OvdlSource getSource(const OverloadCandidate& C)const{
     //if (C.IsSurrogate) return {"",{}};
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
     }
     const FunctionDecl* f=nd->getAsFunction();
-    if (!f) return {"",{}};
+    if (!f) return {};
     if (f->isTemplated() ) 
       return getTemplateSrc(f);
     return getNonTemplateSrc(f);
@@ -1481,20 +1509,10 @@ private:
       if (BestOrProblem)
         res.problems={getCandEntry(*BestOrProblem)};
     }
-    {
-      llvm::raw_string_ostream os(res.callLocation);
-      res.callLoc=Loc;
-      Loc.print(os,S->SourceMgr);
-    }
-    CharSourceRange charRange;
+    res.callSrc=getSrc(sr);
+    res.callSrc.exprLoc=Loc;
     res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() && Args[0]->getEndLoc()==sr.getEnd();
-    charRange=CharSourceRange::getCharRange(sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 0,
-                                     S->getSourceManager(), S->getLangOpts()));
-    res.callRange={sr.getBegin(),Lexer::getLocForEndOfToken(sr.getEnd(), 1,
-                                     S->getSourceManager(), S->getLangOpts())};
     const auto& callKinds=getCallKinds();
-    res.callSignature =
-        Lexer::getSourceText(charRange, S->getSourceManager(), S->getLangOpts());
     if (const Expr* Oe=getSetArgs().ObjectExpr) {
       QualType objType;
       if (auto* UOe= llvm::dyn_cast<UnresolvedMemberExpr>(Oe))
