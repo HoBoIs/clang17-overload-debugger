@@ -2476,8 +2476,8 @@ static const auto &getFrontendActionTable() {
       {frontend::PrintPreamble, OPT_print_preamble},
       {frontend::PrintPreprocessedInput, OPT_E},
       {frontend::TemplightDump, OPT_templight_dump},
-      {frontend::OvdlDump, OPT_ovdl_dump_opt},
-      {frontend::OvdlDump, OPT_ovdl_dump},
+      {frontend::OvInsDump, OPT_ovins_dump_opt},
+      {frontend::OvInsDump, OPT_ovins_dump},
       {frontend::RewriteMacros, OPT_rewrite_macros},
       {frontend::RewriteObjC, OPT_rewrite_objc},
       {frontend::RewriteTest, OPT_rewrite_test},
@@ -2538,27 +2538,27 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
     };
   }
 
-  if (Opts.ProgramAction == frontend::OvdlDump) {
+  if (Opts.ProgramAction == frontend::OvInsDump) {
     GenerateProgramAction = [&]() {
       static constexpr llvm::StringLiteral OptPrefixes[]{
         "Hide","Show","Verbose"
       };
       std::string argStr;
       llvm::raw_string_ostream os(argStr);
-      for (const auto&[from,to]:Opts.OvdlSettings.Intervals){
+      for (const auto&[from,to]:Opts.OvInsSettings.Intervals){
         os<<from<<"-"<<to<<",";
       }
-      os<<(Opts.OvdlSettings.ShowEmptyOverloads?"Show":"Hide")<<"EmptyOverloads,"
-        <<(Opts.OvdlSettings.ShowIncludes?"Show":"Hide")<<"Includes,"
-        <<(Opts.OvdlSettings.ShowNonViableCands?"Show":"Hide")<<"NonViableCands,"
-        <<(Opts.OvdlSettings.ShowImplicitConversions?"Show":"Hide")<<"ImplicitConversions,"
-        <<(Opts.OvdlSettings.ShowBuiltInNonViable?"Show":"Hide")<<"BuiltInNonViable,"
-        <<(Opts.OvdlSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
-        <<(Opts.OvdlSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
-        <<OptPrefixes[Opts.OvdlSettings.ShowCompares]<<"Compares,"
-        <<OptPrefixes[Opts.OvdlSettings.ShowConversions]<<"Conversions"
-        <<(Opts.OvdlSettings.Help?"Help":"");
-      GenerateArg(Args, OPT_ovdl_dump_opt,argStr,SA);
+      os<<(Opts.OvInsSettings.ShowEmptyOverloads?"Show":"Hide")<<"EmptyOverloads,"
+        <<(Opts.OvInsSettings.ShowIncludes?"Show":"Hide")<<"Includes,"
+        <<(Opts.OvInsSettings.ShowNonViableCands?"Show":"Hide")<<"NonViableCands,"
+        <<(Opts.OvInsSettings.ShowImplicitConversions?"Show":"Hide")<<"ImplicitConversions,"
+        <<(Opts.OvInsSettings.ShowBuiltInNonViable?"Show":"Hide")<<"BuiltInNonViable,"
+        <<(Opts.OvInsSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
+        <<(Opts.OvInsSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
+        <<OptPrefixes[Opts.OvInsSettings.ShowCompares]<<"Compares,"
+        <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
+        <<(Opts.OvInsSettings.Help?"Help":"");
+      GenerateArg(Args, OPT_ovins_dump_opt,argStr,SA);
     };
 
   }
@@ -2739,55 +2739,55 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 
     if (ProgramAction == frontend::FixIt && Opt == OPT_fixit_EQ)
       Opts.FixItSuffix = A->getValue();
-    if (ProgramAction == frontend::OvdlDump){
-      if (Opt== OPT_ovdl_dump){
+    if (ProgramAction == frontend::OvInsDump){
+      if (Opt== OPT_ovins_dump){
       }
     }
-    if (ProgramAction == frontend::OvdlDump && Opt == OPT_ovdl_dump_opt){
+    if (ProgramAction == frontend::OvInsDump && Opt == OPT_ovins_dump_opt){
       const auto& x=A->getValues();
       for (const std::string s:x){
         if (s=="ShowNonViableCands"){
-          Opts.OvdlSettings.ShowNonViableCands=true;
+          Opts.OvInsSettings.ShowNonViableCands=true;
         } else if (s=="HideNonViableCands"){
-          Opts.OvdlSettings.ShowNonViableCands=false;
+          Opts.OvInsSettings.ShowNonViableCands=false;
         } else if (s=="ShowIncludes"){
-          Opts.OvdlSettings.ShowIncludes=true;
+          Opts.OvInsSettings.ShowIncludes=true;
         } else if (s=="HideIncludes"){
-          Opts.OvdlSettings.ShowIncludes=false;
+          Opts.OvInsSettings.ShowIncludes=false;
         } else if (s=="ShowEmptyOverloads"){
-          Opts.OvdlSettings.ShowEmptyOverloads=true;
+          Opts.OvInsSettings.ShowEmptyOverloads=true;
         } else if (s=="HideEmptyOverloads"){
-          Opts.OvdlSettings.ShowEmptyOverloads=false;
+          Opts.OvInsSettings.ShowEmptyOverloads=false;
         } else if (s=="ShowBuiltInNonViable"){
-          Opts.OvdlSettings.ShowBuiltInNonViable=true;
+          Opts.OvInsSettings.ShowBuiltInNonViable=true;
         } else if (s=="HideBuiltInNonViable"){
-          Opts.OvdlSettings.ShowBuiltInNonViable=false;
+          Opts.OvInsSettings.ShowBuiltInNonViable=false;
         } else if (s=="ShowImplicitConversions"){
-          Opts.OvdlSettings.ShowImplicitConversions=true;
+          Opts.OvInsSettings.ShowImplicitConversions=true;
         } else if (s=="HideImplicitConversions"){
-          Opts.OvdlSettings.ShowImplicitConversions=false;
+          Opts.OvInsSettings.ShowImplicitConversions=false;
         } else if (s=="ShowConversions"){
-          Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Normal;
+          Opts.OvInsSettings.ShowConversions=clang::FrontendOptions::SC_Normal;
         } else if (s=="HideConversions"){
-          Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Hide;
+          Opts.OvInsSettings.ShowConversions=clang::FrontendOptions::SC_Hide;
         } else if (s=="VerboseConversions"){
-          Opts.OvdlSettings.ShowConversions=clang::FrontendOptions::SC_Verbose;
+          Opts.OvInsSettings.ShowConversions=clang::FrontendOptions::SC_Verbose;
         } else if (s=="ShowCompares"){
-          Opts.OvdlSettings.ShowCompares=clang::FrontendOptions::SC_Normal;
+          Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Normal;
         } else if (s=="HideCompares"){
-          Opts.OvdlSettings.ShowCompares=clang::FrontendOptions::SC_Hide;
+          Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Hide;
         } else if (s=="VerboseCompares"){
-          Opts.OvdlSettings.ShowCompares=clang::FrontendOptions::SC_Verbose;
+          Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Verbose;
         } else if (s=="SummarizeBuiltInBinOps"){
-          Opts.OvdlSettings.SummarizeBuiltInBinOps=true;
+          Opts.OvInsSettings.SummarizeBuiltInBinOps=true;
         } else if (s=="ShowBuiltInBinOps"){
-          Opts.OvdlSettings.SummarizeBuiltInBinOps=false;
+          Opts.OvInsSettings.SummarizeBuiltInBinOps=false;
         } else if (s=="ShowTemplateSpecs"){
-          Opts.OvdlSettings.ShowTemplateSpecs=true;
+          Opts.OvInsSettings.ShowTemplateSpecs=true;
         } else if (s=="HideTemplateSpecs"){
-          Opts.OvdlSettings.ShowTemplateSpecs=false;
+          Opts.OvInsSettings.ShowTemplateSpecs=false;
         } else if (s=="Help"){
-          Opts.OvdlSettings.Help=true;
+          Opts.OvInsSettings.Help=true;
         } else {
           unsigned lF=0;
           unsigned actual=0;
@@ -2817,9 +2817,9 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           if (!valid)
             Diags.Report(diag::err_drv_invalid_value)<<A->getAsString(Args)<<s;
           if (!lFfinished){
-            Opts.OvdlSettings.Intervals.emplace_back(actual,actual);
+            Opts.OvInsSettings.Intervals.emplace_back(actual,actual);
           }else {
-            Opts.OvdlSettings.Intervals.emplace_back(lF,actual);
+            Opts.OvInsSettings.Intervals.emplace_back(lF,actual);
           }
         } 
       }
@@ -4215,7 +4215,7 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
   case frontend::TemplightDump:
-  case frontend::OvdlDump:
+  case frontend::OvInsDump:
   case frontend::MigrateSource:
     return false;
 

@@ -367,6 +367,7 @@ class Sema;
                      bool IgnoreFloatToIntegralConversion = false) const;
     bool isPointerConversionToBool() const;
     bool isPointerConversionToVoidPointer(ASTContext& Context) const;
+    void writeToStream(raw_ostream &) const;
     void dump() const;
   };
 
@@ -413,6 +414,7 @@ class Sema;
     /// that refers to \c ConversionFunction.
     DeclAccessPair FoundConversionFunction;
 
+    void writeToStream(raw_ostream &) const;
     void dump() const;
   };
 

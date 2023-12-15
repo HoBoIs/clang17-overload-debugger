@@ -1,33 +1,9 @@
-#include "clang/AST/Decl.h"
-#include "clang/AST/DeclCXX.h"
-#include "clang/AST/DeclTemplate.h"
-#include "clang/AST/Expr.h"
-#include "clang/AST/ExprCXX.h"
-#include "clang/AST/TemplateBase.h"
-#include "clang/AST/Type.h"
-#include "clang/AST/TypeLoc.h"
-#include "clang/Basic/SourceLocation.h"
-#include "clang/Basic/SourceManager.h"
-#include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
-#include "clang/Frontend/FrontendOptions.h"
-#include "clang/Sema/Overload.h"
+#include "clang/Frontend/OvInsEnumPrints.h"
 #include "clang/Sema/OverloadCallback.h"
-#include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/Sema.h"
-#include "clang/Sema/SemaDiagnostic.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/DebugInfo/BTF/BTF.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/YAMLTraits.h"
-#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <deque>
 #include <iterator>
@@ -60,31 +36,31 @@ void EnsureSemaIsCreated(CompilerInstance &CI, FrontendAction &Action) {
 } // namespace
 
 namespace {
-struct OvdlSource{
+struct OvInsSource{
   SourceRange range;
   SourceLocation Loc;
   std::string source;
   std::string sourceLoc;
-  bool operator==(const OvdlSource& o)const{
+  bool operator==(const OvInsSource& o)const{
     return range==o.range && source==o.source;
   };
 };
-struct OvdlConvEntry{
+struct OvInsConvEntry{
   std::string convPath,convInfo;
   std::string kind;
-  OvdlSource src;
-  bool operator==(const OvdlConvEntry& o) const{
+  OvInsSource src;
+  bool operator==(const OvInsConvEntry& o) const{
     return convPath==o.convPath && convInfo == o.convInfo && kind==o.kind;
   }
 };
-struct OvdlTemplateSpec{
+struct OvInsTemplateSpec{
   //std::string declLocation;
   //std::string source;
-  OvdlSource src;
+  OvInsSource src;
   bool isExact;
   std::vector<std::string> params;
 };
-struct OvdlCandEntry{
+struct OvInsCandEntry{
   //std::string declLocation;
   //clang::SourceLocation declLoc;
   std::string usingLocation;
@@ -92,146 +68,85 @@ struct OvdlCandEntry{
   std::string name;
   bool isSurrogate=false;
   std::deque<std::string> paramTypes;
-  OvdlSource src;
-  std::vector<OvdlTemplateSpec> templateSpecs;
+  OvInsSource src;
+  std::vector<OvInsTemplateSpec> templateSpecs;
   std::optional<OverloadFailureKind> failKind;
   std::optional<std::string> extraFailInfo;
-  std::vector<OvdlConvEntry> Conversions;
+  std::vector<OvInsConvEntry> Conversions;
   std::deque<std::string> templateParams;
-  bool operator==(const OvdlCandEntry& o) const{
+  bool operator==(const OvInsCandEntry& o) const{
     return name == o.name &&
       paramTypes == o.paramTypes && src == o.src &&
       failKind == o.failKind && extraFailInfo == o.extraFailInfo &&
       Conversions == o.Conversions;
   }
 };
-struct OvdlCompareEntry {
-  OvdlCandEntry C1,C2;
+struct OvInsCompareEntry {
+  OvInsCandEntry C1,C2;
   std::string reason;
   bool C1Better;
   std::optional<std::string> deciderConversion;
   std::vector<std::string> conversionCompares;
-  bool operator==(const OvdlCompareEntry& o)const{
+  bool operator==(const OvInsCompareEntry& o)const{
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
       C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
       conversionCompares == o.conversionCompares;
   }
 };
 
-struct OvdlResEntry{
-  std::vector<OvdlCandEntry> viableCandidates,nonViableCandidates;
-  std::optional<OvdlCandEntry> best;
-  std::vector<OvdlCandEntry> problems;
-  std::vector<OvdlCompareEntry> compares;
-  OvdlSource callSrc;
+struct OvInsResEntry{
+  std::vector<OvInsCandEntry> viableCandidates,nonViableCandidates;
+  std::optional<OvInsCandEntry> best;
+  std::vector<OvInsCandEntry> problems;
+  std::vector<OvInsCompareEntry> compares;
+  OvInsSource callSrc;
   clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
   std::string note;
   bool isImplicit=false;
 };
-struct OvdlResNode{
-  OvdlResEntry Entry;
+struct OvInsResNode{
+  OvInsResEntry Entry;
   size_t line;
   std::string Fname;
 };
-class OvdlResCont{
-  std::vector<OvdlResNode> data;
+class OvInsResCont{
+  std::vector<OvInsResNode> data;
 public:
-  using iterator=std::vector<OvdlResNode>::iterator;
-  using const_iterator=std::vector<OvdlResNode>::const_iterator;
+  using iterator=std::vector<OvInsResNode>::iterator;
+  using const_iterator=std::vector<OvInsResNode>::const_iterator;
   iterator begin() { return data.begin();}
   iterator end() { return data.end(); }
   const_iterator begin() const { return data.begin();}
   const_iterator end() const { return data.end(); }
-  void add(const OvdlResNode& newnode){
+  void add(const OvInsResNode& newnode){
     data.push_back(newnode);
   }
 };
 } // namespace
-LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvdlCandEntry);
-LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlCompareEntry);
-LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlConvEntry);
-LLVM_YAML_IS_SEQUENCE_VECTOR(OvdlTemplateSpec);
+LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvInsCandEntry);
+LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsCompareEntry);
+LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsConvEntry);
+LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsTemplateSpec);
 namespace llvm{
 namespace yaml{
-template <> struct ScalarEnumerationTraits<OverloadingResult>{
-  static void enumeration(IO& io, OverloadingResult& val){
-    io.enumCase(val,"Success" ,OR_Success);
-    io.enumCase(val,"NoViableFunction" ,OR_No_Viable_Function);
-    io.enumCase(val,"Deleted" ,OR_Deleted);
-    io.enumCase(val,"Ambigius" ,OR_Ambiguous);
-  }
-};
-template <> struct ScalarEnumerationTraits<BetterOverloadCandidateReason>{
-  static void enumeration(IO& io, BetterOverloadCandidateReason& val){
-      io.enumCase(val,"viability",viability);
-      io.enumCase(val,"CUDAEmit",CUDAEmit);
-      io.enumCase(val,"badConversion",badConversion);
-      io.enumCase(val,"betterConversion",betterConversion);
-      io.enumCase(val,"betterImplicitConversion",betterImplicitConversion);
-      io.enumCase(val,"constructor",constructor);
-      io.enumCase(val,"isSpecialization",isSpecialization);
-      io.enumCase(val,"moreSpecialized",moreSpecialized);
-      io.enumCase(val,"isInherited",isInherited);
-      io.enumCase(val,"derivedFromOther",derivedFromOther);
-      io.enumCase(val,"RewriteKind",RewriteKind);
-      io.enumCase(val,"guideImplicit",guideImplicit);
-      io.enumCase(val,"guideTemplated",guideTemplated);
-      io.enumCase(val,"guideCopy",guideCopy);
-      io.enumCase(val,"enableIf",enableIf);
-      io.enumCase(val,"parameterObjectSize",parameterObjectSize);
-      io.enumCase(val,"multiversion",multiversion);
-      io.enumCase(val,"CUDApreference",CUDApreference);
-      io.enumCase(val,"addressSpace",addressSpace);
-      io.enumCase(val,"inconclusive",inconclusive);
-  }
-};
-template <> struct ScalarEnumerationTraits<clang::OverloadFailureKind>{
-  static void enumeration(IO& io, clang::OverloadFailureKind& val){
-    io.enumCase(val, "ovl_fail_too_many_arguments",
-                ovl_fail_too_many_arguments);
-    io.enumCase(val, "ovl_fail_too_few_arguments", ovl_fail_too_few_arguments);
-    io.enumCase(val, "ovl_fail_bad_conversion", ovl_fail_bad_conversion);
-    io.enumCase(val, "ovl_fail_bad_deduction", ovl_fail_bad_deduction);
-    io.enumCase(val, "ovl_fail_trivial_conversion",
-                ovl_fail_trivial_conversion);
-    io.enumCase(val, "ovl_fail_illegal_constructor",
-                ovl_fail_illegal_constructor);
-    io.enumCase(val, "ovl_fail_bad_final_conversion",
-                ovl_fail_bad_final_conversion);
-    io.enumCase(val, "ovl_fail_final_conversion_not_exact",
-                ovl_fail_final_conversion_not_exact);
-    io.enumCase(val, "ovl_fail_bad_target", ovl_fail_bad_target);
-    io.enumCase(val, "ovl_fail_enable_if", ovl_fail_enable_if);
-    io.enumCase(val, "ovl_fail_explicit", ovl_fail_explicit);
-    io.enumCase(val, "ovl_fail_addr_not_available",
-                ovl_fail_addr_not_available);
-    io.enumCase(val, "ovl_fail_inhctor_slice", ovl_fail_inhctor_slice);
-    io.enumCase(val, "ovl_non_default_multiversion_function",
-                ovl_non_default_multiversion_function);
-    io.enumCase(val, "ovl_fail_object_addrspace_mismatch",
-                ovl_fail_object_addrspace_mismatch);
-    io.enumCase(val, "ovl_fail_constraints_not_satisfied",
-                ovl_fail_constraints_not_satisfied);
-    io.enumCase(val, "ovl_fail_module_mismatched", ovl_fail_module_mismatched);
-    }
-};
-template <> struct MappingTraits<OvdlConvEntry>{
-  static void mapping(IO& io, OvdlConvEntry& fields){
+
+template <> struct MappingTraits<OvInsConvEntry>{
+  static void mapping(IO& io, OvInsConvEntry& fields){
     io.mapRequired("kind",fields.kind);
     io.mapOptional("convPath",fields.convPath,"");
     io.mapOptional("convInfo",fields.convInfo,"");
   }
 };
-template <> struct MappingTraits<OvdlTemplateSpec>{
-  static void mapping(IO& io, OvdlTemplateSpec& fields){
+template <> struct MappingTraits<OvInsTemplateSpec>{
+  static void mapping(IO& io, OvInsTemplateSpec& fields){
     io.mapRequired("declLocation",fields.src.sourceLoc);
     io.mapRequired("source",fields.src.source);
     io.mapRequired("IsExact",fields.isExact);
   }
 };
-template <> struct MappingTraits<OvdlCandEntry>{
-  static void mapping(IO& io, OvdlCandEntry& fields){
+template <> struct MappingTraits<OvInsCandEntry>{
+  static void mapping(IO& io, OvInsCandEntry& fields){
     io.mapRequired("Name",fields.name);
     io.mapOptional("TemplateParams",fields.templateParams);
     io.mapRequired("ParamTypes",fields.paramTypes);
@@ -257,8 +172,8 @@ struct SequenceTraits<std::deque<std::string>> {
   }
   static const bool flow = true;
 };
-template <> struct MappingTraits<OvdlCompareEntry>{
-  static void mapping(IO& io, OvdlCompareEntry& fields){
+template <> struct MappingTraits<OvInsCompareEntry>{
+  static void mapping(IO& io, OvInsCompareEntry& fields){
     io.mapRequired("C1",fields.C1);
     io.mapRequired("C2",fields.C2);
     io.mapRequired("C1Better",fields.C1Better);
@@ -267,14 +182,13 @@ template <> struct MappingTraits<OvdlCompareEntry>{
     io.mapOptional("Decider", fields.deciderConversion);
   }
 };
-template <> struct MappingTraits<OvdlResEntry>{
-  static void mapping(IO& io, OvdlResEntry& fields){
+template <> struct MappingTraits<OvInsResEntry>{
+  static void mapping(IO& io, OvInsResEntry& fields){
     io.mapRequired("callLocation",fields.callSrc.sourceLoc);
     io.mapRequired("callSignature",fields.callSrc.source);
     io.mapRequired("callTypes",fields.callTypes);
     io.mapRequired("overloading result",fields.ovRes);
     io.mapRequired("viable candidates",fields.viableCandidates);
-
     io.mapOptional("non viable candidates",fields.nonViableCandidates);
     io.mapOptional("best",fields.best);
     io.mapOptional("problems",fields.problems);
@@ -288,244 +202,16 @@ template <> struct MappingTraits<OvdlResEntry>{
 }//namespace llvm
 
 namespace{
-std::string toString(ImplicitConversionKind e){
-  switch(e){
-  case ICK_Identity: return "Identity";
-  case ICK_Lvalue_To_Rvalue: return "Lvalue_To_Rvalue";
-  case ICK_Array_To_Pointer: return "Array_To_Pointer";
-  case ICK_Function_To_Pointer: return "Function_To_Pointer";
-  case ICK_Function_Conversion: return "Function_Conversion";
-  case ICK_Qualification: return "Qualification";
-  case ICK_Integral_Promotion: return "Integral_Promotion";
-  case ICK_Floating_Promotion: return "Floating_Promotion";
-  case ICK_Complex_Promotion: return "Complex_Promotion";
-  case ICK_Integral_Conversion: return "Integral_Conversion";
-  case ICK_Floating_Conversion: return "Floating_Conversion";
-  case ICK_Complex_Conversion: return "Complex_Conversion";
-  case ICK_Floating_Integral: return "Floating_Integral";
-  case ICK_Pointer_Conversion: return "Pointer_Conversion";
-  case ICK_Pointer_Member: return "Pointer_Member";
-  case ICK_Boolean_Conversion: return "Boolean_Conversion";
-  case ICK_Compatible_Conversion: return "Compatible_Conversion";
-  case ICK_Derived_To_Base: return "Derived_To_Base";
-  case ICK_Vector_Conversion: return "Vector_Conversion";
-  case ICK_SVE_Vector_Conversion: return "SVE_Vector_Conversion";
-  case ICK_RVV_Vector_Conversion: return "RVV_Vector_Conversion";
-  case ICK_Vector_Splat: return "Vector_Splat";
-  case ICK_Complex_Real: return "Complex_Real";
-  case ICK_Block_Pointer_Conversion: return "Block_Pointer_Conversion";
-  case ICK_TransparentUnionConversion: return "TransparentUnionConversion";
-  case ICK_Writeback_Conversion: return "Writeback_Conversion";
-  case ICK_Zero_Event_Conversion: return "Zero_Event_Conversion";
-  case ICK_Zero_Queue_Conversion: return "Zero_Queue_Conversion";
-  case ICK_C_Only_Conversion: return "C_Only_Conversion";
-  case ICK_Incompatible_Pointer_Conversion:
-    return "Incompatible_Pointer_Conversion";
-  case ICK_Num_Conversion_Kinds: return "Num_Conversion_Kinds";
-  }
-  llvm_unreachable("Unknown ImplicitConversionKind");
-}
-std::string toString(clang::OverloadFailureKind r){
-  switch (r) {
-  case ovl_fail_too_many_arguments: return "ovl_fail_too_many_arguments";
-  case ovl_fail_too_few_arguments: return "ovl_fail_too_few_arguments";
-  case ovl_fail_bad_conversion: return "ovl_fail_bad_conversion";
-  case ovl_fail_bad_deduction: return "ovl_fail_bad_deduction";
-  case ovl_fail_trivial_conversion: return "ovl_fail_trivial_conversion";
-  case ovl_fail_illegal_constructor: return "ovl_fail_illegal_constructor";
-  case ovl_fail_bad_final_conversion: return "ovl_fail_bad_final_conversion";
-  case ovl_fail_final_conversion_not_exact: return "ovl_fail_final_conversion_not_exact";
-  case ovl_fail_bad_target: return "ovl_fail_bad_target";
-  case ovl_fail_enable_if: return "ovl_fail_enable_if";
-  case ovl_fail_explicit: return "ovl_fail_explicit";
-  case ovl_fail_addr_not_available: return "ovl_fail_addr_not_available";
-  case ovl_fail_inhctor_slice: return "ovl_fail_inhctor_slice";
-  case ovl_non_default_multiversion_function: return "ovl_non_default_multiversion_function";
-  case ovl_fail_object_addrspace_mismatch: return "ovl_fail_object_addrspace_mismatch";
-  case ovl_fail_constraints_not_satisfied: return "ovl_fail_constraints_not_satisfied";
-  case ovl_fail_module_mismatched: return "ovl_fail_module_mismatched";
-  }
-  llvm_unreachable("Unknown OFK");
-}
-std::string toString(clang::OverloadingResult r){
-  switch(r){
-  case OR_Success:
-    return "OR_Success";
-  case OR_No_Viable_Function:
-    return "OR_No_Viable_Function";
-  case OR_Ambiguous:
-    return "OR_Ambiguous";
-  case OR_Deleted:
-    return "OR_Deleted";
-  }
-  llvm_unreachable("Unknown OR");
-}
-std::string toString(Sema::TemplateDeductionResult r){
-  switch (r) {
-  case Sema::TDK_Success: return "TDK_Success";
-  case Sema::TDK_Invalid: return "TDK_Invalid";
-  case Sema::TDK_InstantiationDepth: return "TDK_InstantiationDepth";
-  case Sema::TDK_Incomplete: return "TDK_Incomplete";
-  case Sema::TDK_IncompletePack: return "TDK_IncompletePack";
-  case Sema::TDK_Inconsistent: return "TDK_Inconsistent";
-  case Sema::TDK_Underqualified: return "TDK_Underqualified";
-  case Sema::TDK_SubstitutionFailure: return "TDK_SubstitutionFailure";
-  case Sema::TDK_DeducedMismatch: return "TDK_DeducedMismatch";
-  case Sema::TDK_DeducedMismatchNested: return "TDK_DeducedMismatchNested";
-  case Sema::TDK_NonDeducedMismatch: return "TDK_NonDeducedMismatch";
-  case Sema::TDK_TooManyArguments: return "TDK_TooManyArguments";
-  case Sema::TDK_TooFewArguments: return "TDK_TooFewArguments";
-  case Sema::TDK_InvalidExplicitArguments:
-    return "TDK_InvalidExplicitArguments";
-  case Sema::TDK_NonDependentConversionFailure:
-    return "TDK_NonDependentConversionFailure";
-  case Sema::TDK_ConstraintsNotSatisfied:
-    return "TDK_ConstraintsNotSatisfied";
-  case Sema::TDK_MiscellaneousDeductionFailure:
-    return "TDK_MiscellaneousDeductionFailure";
-  case Sema::TDK_CUDATargetMismatch: return "TDK_CUDATargetMismatch";
-  case Sema::TDK_AlreadyDiagnosed: return "TDK_AlreadyDiagnosed";
-  }
-llvm_unreachable("unknown TemplateDeductionResult");
-}
-/*std::string toString(ImplicitConversionRank e){
-  switch(e){
-  case ICR_Exact_Match:
-    return "Exact Match";
-  case ICR_Promotion:
-    return "Promotion";
-  case ICR_Conversion:
-    return "Conversion";
-  case ICR_OCL_Scalar_Widening:
-    return "ScalarWidening";
-  case ICR_Complex_Real_Conversion:
-    return "Complex-Real";
-  case ICR_Writeback_Conversion:
-    return "Writeback";
-  case ICR_C_Conversion:
-    return "C Only";
-  case ICR_C_Conversion_Extension:
-    return "Not standard";
-  }
-llvm_unreachable("unknown enum");
-}*/
-std::string toString(BadConversionSequence::FailureKind k){
-  switch (k) {
-  case BadConversionSequence::no_conversion:
-    return "no_conversion";
-  case BadConversionSequence::unrelated_class:
-    return "unrelated_class";
-  case BadConversionSequence::bad_qualifiers:
-    return "bad_qualifiers";
-  case BadConversionSequence::lvalue_ref_to_rvalue:
-    return "lvalue_ref_to_rvalue";
-  case BadConversionSequence::rvalue_ref_to_lvalue:
-    return "rvalue_ref_to_lvalue";
-  case BadConversionSequence::too_few_initializers:
-    return "too_few_initializers";
-  case BadConversionSequence::too_many_initializers:
-    return "too_many_initializers";
-  }
-llvm_unreachable("unknown FaliureKind");
-}
-std::string toString(BetterOverloadCandidateReason r){
-  switch(r){
-    case viability:
-    return "viability";
-  case CUDAEmit:
-    return "CUDAEmit";
-  case badConversion:
-    return "badConversion";
-  case betterConversion:
-    return "betterConversion";
-  case betterImplicitConversion:
-    return "betterImplicitConversion";
-  case constructor:
-    return "constructor";
-  case isSpecialization:
-    return "isSpecialization";
-  case moreSpecialized:
-    return "moreSpecialized";
-  case isInherited:
-    return "isInherited";
-  case derivedFromOther:
-    return "derivedFromOther";
-  case RewriteKind:
-    return "RewriteKind";
-  case guideImplicit:
-    return "guideImplicit";
-  case guideCopy:
-    return "guideCopy";
-  case guideTemplated:
-    return "guideTemplated";
-  case enableIf:
-    return "enableIf";
-  case parameterObjectSize:
-    return "parameterObjectSize";
-  case multiversion:
-    return "multiversion";
-  case CUDApreference:
-    return "CUDApreference";
-  case addressSpace:
-    return "addressSpace";
-  case inconclusive:
-    return "inconclusive";
-  };
-  llvm_unreachable("Unknown BetterOverloadCandidateReason");
-};
 std::string getConversionSeq(const StandardConversionSequence &cs) {
   std::string res;
   llvm::raw_string_ostream os(res);
-  bool PrintedSomething = false;
-  if (cs.First != ICK_Identity) {
-    os << toString(cs.First);
-    PrintedSomething = true;
-  }
-
-  if (cs.Second != ICK_Identity) {
-    if (PrintedSomething) {
-      os << " -> ";
-    }
-    os << toString(cs.Second);
-
-    if (cs.CopyConstructor) {
-      os << " (by copy constructor)";
-    } else if (cs.DirectBinding) {
-      os << " (direct reference binding)";
-    } else if (cs.ReferenceBinding) {
-      os << " (reference binding)";
-    }
-    PrintedSomething = true;
-  }
-
-  if (cs.Third != ICK_Identity) {
-    if (PrintedSomething) {
-      os << " -> ";
-    }
-    os << toString(cs.Third);
-    PrintedSomething = true;
-  }
-
-  if (!PrintedSomething) {
-    os << "No conversions required";
-  }
+  cs.writeToStream(os);
   return res;
 }
 std::string getConversionSeq(const UserDefinedConversionSequence &cs) {
   std::string res;
   llvm::raw_string_ostream os(res);
-  if (cs.Before.First || cs.Before.Second || cs.Before.Third) {
-    os << getConversionSeq(cs.Before);
-    os << " -> ";
-  }
-  if (cs.ConversionFunction) {
-    os <<'"'<< cs.ConversionFunction->getQualifiedNameAsString()<<'"';
-  } else
-    os << "aggregate initialization";
-  if (cs.After.First || cs.After.Second || cs.After.Third) {
-    os << " -> ";
-    os << getConversionSeq(cs.After);
-  }
+  cs.writeToStream(os);
   return res;
 }
 
@@ -583,7 +269,7 @@ QualType getToType(const OverloadCandidate& C,int idx){
   }
   return C.Function->parameters()[idx]->getType();
 }
-void displayOvdlResEntry(llvm::raw_ostream& Out,OvdlResEntry& Entry){
+void displayOvInsResEntry(llvm::raw_ostream& Out,OvInsResEntry& Entry){
   std::string YAML;
   {
     llvm::raw_string_ostream OS(YAML);
@@ -601,9 +287,9 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   bool inCompare=false;
   const OverloadCandidateSet* Set=nullptr;
   SourceLocation Loc={};
-  std::vector<OvdlCompareEntry> compares;
-  OvdlResCont cont;
-  clang::FrontendOptions::OvdlSettingsType settings;
+  std::vector<OvInsCompareEntry> compares;
+  OvInsResCont cont;
+  clang::FrontendOptions::OvInsSettingsType settings;
   std::vector<CompareKind> compareResults;
   struct SetArgs{
     const OverloadCandidateSet* Set;
@@ -643,14 +329,14 @@ public:
     if (needAllCompareInfo())
       compareResults=c;
   };
-  void setSettings(const clang::FrontendOptions::OvdlSettingsType &s) {
+  void setSettings(const clang::FrontendOptions::OvInsSettingsType &s) {
     settings = s;
   }
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
   virtual void atEnd() override{
     for (auto& x:cont){
-      displayOvdlResEntry(llvm::outs(),x.Entry);
+      displayOvInsResEntry(llvm::outs(),x.Entry);
     }
     printHumanReadable();
     cont={};
@@ -678,7 +364,7 @@ public:
         const OverloadCandidateSet& set, OverloadingResult ovRes,
         const OverloadCandidate* BestOrProblem) override{
     if (!inBestOC)return;
-    OvdlResNode node;
+    OvInsResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
     node.Fname=L.getFilename();
@@ -715,16 +401,18 @@ public:
       inCompare=false;
       return;
     }
-    OvdlCompareEntry Entry;
+    OvInsCompareEntry Entry;
     Entry.C1Better=res;
     Entry.C1=getCandEntry(Cand1);
     Entry.C2=getCandEntry(Cand2);
-    if (Entry.C1 == Entry.C2){inCompare=false;
-      return;}                    // EquivalentInternalLinkageDeclaration
+    if (Entry.C1 == Entry.C2){
+      inCompare=false;
+      return;
+    }                    // EquivalentInternalLinkageDeclaration
     for (const auto& E:compares){//Removeing duplicates
       if (E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
     }
-    Entry.reason=toString(reason);
+    Entry.reason=str::toString(reason);
     const auto& callKinds=getCallKinds();
     if (reason==clang::betterConversion){
       Entry.deciderConversion = ConversionCompareAsString(Cand1,Cand2,infoIdx,
@@ -747,7 +435,7 @@ public:
           Other=Entry;//Keep the one where C1 is better
           inCompare=false;
           return;
-        }else if (!Other.C1Better && !Entry.C1Better){
+        }else if (Other.C1Better == Entry.C1Better){
           /*Ambigioty, keep both*/
         }else{ 
           inCompare=false;
@@ -774,17 +462,16 @@ private:
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
     unsigned ID1uninited=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
     unsigned ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "");
-
-
   }*/
-  void printConvEntry(const OvdlConvEntry& Entry)const {
+  void printConvEntry(const OvInsConvEntry& Entry)const {
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
     unsigned ID1uninited=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
     if (Entry.convPath!="")
-      S->Diags.Report(Entry.src.range.getBegin(),ID1)<<Entry.kind<<Entry.convPath<<Entry.convInfo
-        <<Entry.src.range;
+      S->Diags.Report(Entry.src.range.getBegin(),ID1)<<Entry.kind<<Entry.convPath
+            <<Entry.convInfo<<Entry.src.range;
     else
-      S->Diags.Report(Entry.src.range.getBegin(),ID1uninited)<<Entry.kind<<Entry.src.range;
+      S->Diags.Report(Entry.src.range.getBegin(),ID1uninited)<<Entry.kind
+            <<Entry.src.range;
   }
   template<class T>
   std::string concat(const T& in, const std::string& sep)const{
@@ -798,20 +485,24 @@ private:
     os<<in.back()<<']';
     return res;
   }
-  void printCompareEntry(const OvdlCompareEntry& Entry,SourceLocation loc) const{
-    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Compearing candidates resulted in %0 reason: %1 %2 %3");
-    S->Diags.Report(loc,ID1)<<(Entry.C1Better?"The first is better":"The first is not better")
-                  <<Entry.reason<<(Entry.conversionCompares.empty()?"":"\n\tConversions:"+concat(Entry.conversionCompares,"\n\t"))
-                  <<(Entry.deciderConversion?"\n\tDeider: "+*Entry.deciderConversion:"");
+  void printCompareEntry(const OvInsCompareEntry& Entry,SourceLocation loc) const{
+    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note,
+          "Compearing candidates resulted in %0 reason: %1 %2 %3");
+    S->Diags.Report(loc,ID1)<<(Entry.C1Better?
+          "The first is better":"The first is not better")
+          <<Entry.reason<<(Entry.conversionCompares.empty()?
+            "":"\n\tConversions:"+concat(Entry.conversionCompares,"\n\t"))
+          <<(Entry.deciderConversion?"\n\tDeider: "+*Entry.deciderConversion:"");
     printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better");
     printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse");
   }
-  void printCandEntry(const OvdlCandEntry& Entry,std::string nm="")const {
-    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1 %2 %3 %4");
+  void printCandEntry(const OvInsCandEntry& Entry,std::string nm="")const {
+    unsigned ID1=S->Diags.getDiagnosticIDs()->
+            getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1 %2 %3 %4");
     std::string temp=concat(Entry.templateParams,", ");
     S->Diags.Report(Entry.src.Loc, ID1)<<nm<<Entry.name
             <<(temp==""?"":"\n\tTemplate params: "+temp)
-            <<(Entry.failKind?"\n\tFailure reason: "+toString(*Entry.failKind):"")
+            <<(Entry.failKind?"\n\tFailure reason: "+str::toString(*Entry.failKind):"")
             <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")
             <<Entry.src.range;
     if (0)//!SUMARIZE convs
@@ -835,10 +526,10 @@ private:
         diag<<x.src.range;
     }
   }
-  void printResEntry(const OvdlResEntry& Entry)const{
+  void printResEntry(const OvInsResEntry& Entry)const{
     std::string types=concat(Entry.callTypes,", ");
     auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
-    S->Diags.Report(Entry.callSrc.Loc, ID0)<<toString(Entry.ovRes)<<types<<Entry.note
+    S->Diags.Report(Entry.callSrc.Loc, ID0)<<str::toString(Entry.ovRes)<<types<<Entry.note
               <<Entry.callSrc.range;
     if (Entry.best){
       printCandEntry(*Entry.best,"Best ");
@@ -874,7 +565,7 @@ private:
       if (from<=x && x<= to)return true;
     return false;
   }
-  std::optional<std::pair<std::string,std::string>> writeBuiltInsBinOpSumm(const OvdlResEntry& E)const{
+  std::optional<std::pair<std::string,std::string>> writeBuiltInsBinOpSumm(const OvInsResEntry& E)const{
     std::pair<std::string,std::string> res;
     std::set<std::string> types[3];
     if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
@@ -936,7 +627,7 @@ private:
     os<<")";
     return res;
   }
-  bool shouldSumm(const OvdlCandEntry& cand)const{
+  bool shouldSumm(const OvInsCandEntry& cand)const{
     if( cand.src.sourceLoc=="Built-in" && cand.paramTypes.size()==2 && 
         cand.paramTypes[0]!=cand.paramTypes[1]) {
       std::string_view name(cand.name);
@@ -946,7 +637,7 @@ private:
     }
     return false;
   }
-  void summarizeBuiltInBinOps(OvdlResEntry& E){
+  void summarizeBuiltInBinOps(OvInsResEntry& E){
     if (const auto& c=writeBuiltInsBinOpSumm(E)){
       for (int i=0; i<(int)E.viableCandidates.size();++i){
         const auto& cand=E.viableCandidates[i];
@@ -970,7 +661,6 @@ private:
       E.note+="\nThere are more viable built in functions, with the calltypes combined from "+
         c->first+" and "+c->second+" you can list them with \"ShowBuiltInBinOps\"";
     }
-
   }
   std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
       const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,
@@ -993,8 +683,9 @@ private:
     else if (Cand1.Conversions[idx].isStaticObjectArgument())
       os<<"StaticObjectArgument";
     else{
-      os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType().getAsString() <<
-        Kinds[vk] << " -> " << getToType(Cand1, idx).getCanonicalType().getAsString();
+      os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType()
+        .getAsString() << Kinds[vk] << " -> " << getToType(Cand1, idx)
+        .getCanonicalType().getAsString();
       std::string temp=getTemplatedParamForConversion(Cand1, idx);
       if (temp!="")
         os<<" = "<<temp;
@@ -1018,21 +709,20 @@ private:
     }
     return res;
   }
-  std::vector<OvdlCandEntry> getRelevantCands(OvdlResEntry& Entry)const{
-    std::vector<OvdlCandEntry> relevants=Entry.problems;
+  std::vector<OvInsCandEntry> getRelevantCands(OvInsResEntry& Entry)const{
+    std::vector<OvInsCandEntry> relevants=Entry.problems;
     if (relevants.empty() && Entry.best){
       relevants.push_back(*Entry.best);
     }
     return relevants;
   }
-  bool isIn(const std::vector<OvdlCandEntry>& v, OvdlCandEntry c)const{
-    for (const auto& e:v){
+  bool isIn(const std::vector<OvInsCandEntry>& v, OvInsCandEntry c)const{
+    for (const auto& e:v)
       if (e==c) return true;
-    }
     return false;
   }
-  void filterForRelevant(OvdlResEntry& Entry)const{
-    std::vector<OvdlCandEntry> relevants=getRelevantCands(Entry);
+  void filterForRelevant(OvInsResEntry& Entry)const{
+    std::vector<OvInsCandEntry> relevants=getRelevantCands(Entry);
     for (size_t i=0; i<Entry.compares.size();++i){
       bool isRelevant=isIn(relevants,Entry.compares[i].C1) ||
                       isIn(relevants,Entry.compares[i].C2);
@@ -1043,7 +733,7 @@ private:
       }
     }
   }
-  std::pair<int,int> NeededArgs(const OverloadCandidate& C)const{
+  std::pair<int,int> NeededArgsRange(const OverloadCandidate& C)const{
     if (C.IsSurrogate){
       //C.FoundDecl.getDecl();
       const NamedDecl* nd=C.FoundDecl.getDecl();
@@ -1052,13 +742,15 @@ private:
       }
       const auto ty=nd->getAsFunction()->getCallResultType();
         //The type of the functionPtr
-      const auto* fptr=ty->getAs<PointerType>()->getPointeeType()->getAs<FunctionProtoType>();
+      const auto* fptr=ty->getAs<PointerType>()->getPointeeType()
+                      ->getAs<FunctionProtoType>();
       int cnt=fptr->getNumParams()+1;
       return {cnt,cnt};
-    }//TODO
+    }
     if (C.Function){
       //Check when deducing this is implemented FIXME
-      bool needObj=isa<CXXMethodDecl>(C.Function) && !isa<CXXConstructorDecl>(C.Function);
+      bool needObj=isa<CXXMethodDecl>(C.Function) && 
+              !isa<CXXConstructorDecl>(C.Function);
       if (!C.Function->getEllipsisLoc().isInvalid())
         return {C.Function->getMinRequiredArguments()+needObj,-1};
       return {C.Function->getMinRequiredArguments()+needObj,
@@ -1077,7 +769,7 @@ private:
     switch ((OverloadFailureKind)C.FailureKind) {
     case ovl_fail_too_many_arguments:
     case ovl_fail_too_few_arguments:{
-      const auto &[mn,mx]=NeededArgs(C);
+      const auto &[mn,mx]=NeededArgsRange(C);
       os<<"Needed: "<<mn;
       if (mn!=mx){
         if(mx==-1)
@@ -1092,7 +784,7 @@ private:
       for (size_t i=0; i!=C.Conversions.size(); i++){
         if (!C.Conversions[i].isInitialized())continue;
         if (C.Conversions[i].isBad()){
-          os << toString(C.Conversions[i].Bad.Kind) <<
+          os << str::toString(C.Conversions[i].Bad.Kind) <<
                  " Pos: " <<  (1+i) <<  "    From: " <<
                  C.Conversions[i].Bad.getFromType().getAsString() <<
                  Kinds[getCallKinds()[i-C.IgnoreObjectArgument]] << "    To: " <<
@@ -1102,7 +794,7 @@ private:
       }
       return {};
     case ovl_fail_bad_deduction:
-      return toString(Sema::TemplateDeductionResult(C.DeductionFailure.Result));
+      return str::toString(Sema::TemplateDeductionResult(C.DeductionFailure.Result));
     case ovl_fail_trivial_conversion:
     case ovl_fail_illegal_constructor:
     case ovl_fail_bad_final_conversion:
@@ -1124,15 +816,15 @@ private:
     return {};
   }
 
-  OvdlSource getSrcFromExpr(const Expr* e)const{
-    OvdlSource res=getSrcFromRange(e->getSourceRange());
+  OvInsSource getSrcFromExpr(const Expr* e)const{
+    OvInsSource res=getSrcFromRange(e->getSourceRange());
     //res.range=e->getSourceRange();
     res.Loc=e->getExprLoc();
     //res.sourceLoc=res.range.getBegin().printToString(S->getSourceManager());
     //res.source=;
     return res;
   };
-  OvdlSource getConversionSource(const SetArgs& setArg,int idx)const{
+  OvInsSource getConversionSource(const SetArgs& setArg,int idx)const{
     if (idx>=0)
       return getSrcFromExpr(setArg.inArgs[idx]);
     if (const auto* objExpr=setArg.ObjectExpr){
@@ -1143,19 +835,20 @@ private:
       }
       return getSrcFromRange(objExpr->getSourceRange());
     }
-    OvdlSource res;
+    OvInsSource res;
     res.range={setArg.Loc};
     return res;    
   }
-  std::vector<OvdlConvEntry> getConversions(const OverloadCandidate& C)const{
-    std::vector<OvdlConvEntry> res(C.Conversions.size());
+  std::vector<OvInsConvEntry> getConversions(const OverloadCandidate& C)const{
+    std::vector<OvInsConvEntry> res(C.Conversions.size());
     const auto& callKinds=getCallKinds();
     const SetArgs& setArg=getSetArgs();
     bool isStaticCall=setArg.ObjectExpr==nullptr&&C.IgnoreObjectArgument;
     for (size_t i=0; i<C.Conversions.size();++i){
-      const ExprValueKind fromKind=(i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
+      const ExprValueKind fromKind=
+            (i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
       const auto& conv=C.Conversions[i];
-      OvdlConvEntry& actual=res[i];
+      OvInsConvEntry& actual=res[i];
       {
         int inArgsIdx=i;
         if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
@@ -1214,7 +907,7 @@ private:
         actual.kind="Ellipsis";
         break;
       case ImplicitConversionSequence::BadConversion:
-        actual.kind="Bad: "+toString(conv.Bad.Kind);
+        actual.kind="Bad: "+str::toString(conv.Bad.Kind);
         path << conv.Bad.getFromType().getCanonicalType().getAsString();
         path << Kinds[fromKind];
         path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString();
@@ -1259,8 +952,8 @@ private:
 
     return res;
   }
-  OvdlCandEntry getCandEntry(const OverloadCandidate &C)const {
-    OvdlCandEntry res;
+  OvInsCandEntry getCandEntry(const OverloadCandidate &C)const {
+    OvInsCandEntry res;
     llvm::raw_string_ostream usingLoc(res.usingLocation);
     if (settings.ShowConversions){
       res.Conversions=getConversions(C);//FIXME
@@ -1324,16 +1017,16 @@ private:
     }
     return res;
   }
-  std::vector<OvdlTemplateSpec> getSpecializations(const OverloadCandidate& C)const{
+  std::vector<OvInsTemplateSpec> getSpecializations(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
     }
     const FunctionDecl* f=nd->getAsFunction();
-    std::vector<OvdlTemplateSpec> res;
+    std::vector<OvInsTemplateSpec> res;
     for (const auto* x:f->getDescribedFunctionTemplate()->specializations()){
       if (x->getSourceRange()!=f->getSourceRange()){
-        OvdlTemplateSpec entry;
+        OvInsTemplateSpec entry;
         entry.isExact=true;
         entry.src=getSrcFromRange({x->getLocation(),x->getTypeSpecEndLoc()});
         if (x->getTemplateSpecializationArgs() && C.Function->getTemplateSpecializationArgs()){
@@ -1364,8 +1057,8 @@ private:
     }
     return res;
   }
-  OvdlSource getSrcFromRange(const SourceRange& r)const{
-    OvdlSource res;
+  OvInsSource getSrcFromRange(const SourceRange& r)const{
+    OvInsSource res;
     SourceLocation endloc(Lexer::getLocForEndOfToken(
         r.getEnd(), 0, S->getSourceManager(), S->getLangOpts()));
     SourceLocation endloc2(Lexer::getLocForEndOfToken(
@@ -1377,12 +1070,12 @@ private:
     return res;
   }
 
-  OvdlSource getNonTemplateSrc(const FunctionDecl* f)const{
+  OvInsSource getNonTemplateSrc(const FunctionDecl* f)const{
     SourceRange r=f->getSourceRange();
     r.setEnd(f->getTypeSpecEndLoc());
     return getSrcFromRange(r);
   }
-  OvdlSource getTemplateSrc(const FunctionDecl* f)const{
+  OvInsSource getTemplateSrc(const FunctionDecl* f)const{
     llvm::SmallVector<const Expr *> AC;
     SourceRange r=f->getDescribedFunctionTemplate()->getSourceRange();
     r.setEnd(f->getTypeSpecEndLoc());
@@ -1406,7 +1099,7 @@ private:
     const FunctionDecl* f=nd->getAsFunction();
     return f&&f->isTemplated();
   }
-  OvdlSource getSource(const OverloadCandidate& C)const{
+  OvInsSource getSource(const OverloadCandidate& C)const{
     //if (C.IsSurrogate) return {"",{}};
     const NamedDecl* nd=C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd)){
@@ -1495,7 +1188,8 @@ private:
     }
     for (; i<types.size();i++){
       const auto&[type,isDefaulted]=types[i];
-      res.push_back(type.getCanonicalType().getAsString()+(isDefaulted?"=default":""));
+      res.push_back(type.getCanonicalType().getAsString()+
+                    (isDefaulted?"=default":""));
     }
     if (C.Function && C.Function->getEllipsisLoc()!=SourceLocation())
       res.push_back("...");
@@ -1516,9 +1210,9 @@ private:
     return res;
   }
   SourceRange sr;
-  OvdlResEntry getResEntry(OverloadingResult ovres,
+  OvInsResEntry getResEntry(OverloadingResult ovres,
                            const OverloadCandidate* BestOrProblem) {
-    OvdlResEntry res;
+    OvInsResEntry res;
     ArrayRef<Expr*> Args=getSetArgs().inArgs;
     sr=makeSR({
           Loc,(Args.size()&&Args[0]?Args[0]->getBeginLoc():SourceLocation{})
@@ -1546,7 +1240,8 @@ private:
     }
     res.callSrc=getSrcFromRange(sr);
     res.callSrc.Loc=Loc;
-    res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() && Args[0]->getEndLoc()==sr.getEnd();
+    res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() &&
+                    Args[0]->getEndLoc()==sr.getEnd();
     const auto& callKinds=getCallKinds();
     if (const Expr* Oe=getSetArgs().ObjectExpr) {
       QualType objType;
@@ -1577,7 +1272,7 @@ private:
     }
     return res;
   }
-  void addCand(std::vector<OvdlCandEntry>& v,const OvdlCandEntry& cand)const{
+  void addCand(std::vector<OvInsCandEntry>& v,const OvInsCandEntry& cand)const{
     for (const auto&c:v){
       if (c==cand) return;
     }
@@ -1586,14 +1281,14 @@ private:
 };
 }//namespace
 std::unique_ptr<ASTConsumer>
-OvdlDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
+OvInsDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
     return std::make_unique<ASTConsumer>();
 }
-void OvdlDumpAction::ExecuteAction(){
+void OvInsDumpAction::ExecuteAction(){
   CompilerInstance &CI = getCompilerInstance();
   EnsureSemaIsCreated(CI, *this);
   auto x=std::make_unique<DefaultOverloadInstCallback>();
-  x->setSettings(CI.getFrontendOpts().OvdlSettings);
+  x->setSettings(CI.getFrontendOpts().OvInsSettings);
   CI.getSema().OverloadInspectionCallbacks.push_back(std::move(x));
   ASTFrontendAction::ExecuteAction();
 }

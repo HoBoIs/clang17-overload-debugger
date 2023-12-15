@@ -206,7 +206,7 @@ protected:
 public:
   bool hasCodeCompletionSupport() const override { return false; }
 };
-class OvdlDumpAction :public ASTFrontendAction{
+class OvInsDumpAction :public ASTFrontendAction{
 protected:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef InFile) override;

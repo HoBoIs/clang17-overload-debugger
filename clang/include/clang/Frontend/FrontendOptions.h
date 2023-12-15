@@ -135,7 +135,7 @@ enum ActionKind {
   TemplightDump,
 
   /// Dump overload info
-  OvdlDump,
+  OvInsDump,
 
   /// Run migrator.
   MigrateSource,
@@ -523,7 +523,7 @@ public:
     SC_Verbose
   };
 
-  struct OvdlSettingsType{
+  struct OvInsSettingsType{
     llvm::SmallVector<std::pair<unsigned,unsigned>,2> Intervals;
     unsigned ShowNonViableCands:1;
     unsigned ShowIncludes:1;
@@ -535,7 +535,7 @@ public:
     unsigned ShowTemplateSpecs:1;
     unsigned SummarizeBuiltInBinOps:1;
     unsigned Help:1;
-  }OvdlSettings;
+  }OvInsSettings;
 
 
 public:
@@ -551,7 +551,7 @@ public:
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         TimeTraceGranularity(500),
-        OvdlSettings({{},true,false,SC_Normal,false,false,SC_Normal,false,true,true,false}) {}
+        OvInsSettings({{},true,false,SC_Normal,false,false,SC_Normal,false,true,true,false}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.

@@ -498,7 +498,10 @@ NarrowingKind StandardConversionSequence::getNarrowingKind(
 /// dump - Print this standard conversion sequence to standard
 /// error. Useful for debugging overloading issues.
 LLVM_DUMP_METHOD void StandardConversionSequence::dump() const {
-  raw_ostream &OS = llvm::errs();
+  writeToStream(llvm::errs());
+}
+
+void StandardConversionSequence::writeToStream(raw_ostream &OS) const {
   bool PrintedSomething = false;
   if (First != ICK_Identity) {
     OS << GetImplicitConversionName(First);
@@ -536,8 +539,11 @@ LLVM_DUMP_METHOD void StandardConversionSequence::dump() const {
 
 /// dump - Print this user-defined conversion sequence to standard
 /// error. Useful for debugging overloading issues.
-void UserDefinedConversionSequence::dump() const {
-  raw_ostream &OS = llvm::errs();
+LLVM_DUMP_METHOD void UserDefinedConversionSequence::dump() const {
+  writeToStream(llvm::errs());
+}
+
+void UserDefinedConversionSequence::writeToStream(raw_ostream &OS) const {
   if (Before.First || Before.Second || Before.Third) {
     Before.dump();
     OS << " -> ";

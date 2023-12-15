@@ -6323,10 +6323,10 @@ def ast_dump_all_EQ : Joined<["-"], "ast-dump-all=">,
 def ast_dump_decl_types : Flag<["-"], "ast-dump-decl-types">,
   HelpText<"Include declaration types in AST dumps">,
   MarshallingInfoFlag<FrontendOpts<"ASTDumpDeclTypes">>;
-def ovdl_dump : Flag<["-"], "ovdl-dump">,
-  HelpText<"Dump ovdl information to stdout">;
-def ovdl_dump_opt : CommaJoined<["-"], "ovdl-dump-opt=">,Flags<[CC1Option, NoDriverOption]>,
-  HelpText<"Dump ovdl information to stdout with options">;
+def ovins_dump : Flag<["-"], "ovins-dump">,
+  HelpText<"Dump ovins information to stdout">;
+def ovins_dump_opt : CommaJoined<["-"], "ovins-dump-opt=">,Flags<[CC1Option, NoDriverOption]>,
+  HelpText<"Duins ovdl information to stdout with options">;
   //Values<"showIncludes,showEmptyOverloads,hideNotViableCand,hideCompares">,
   //NormalizedValues<["showIncludes","showEmptyOverloads","hideNotViableCand","hideCompares"]>;
   //MarshallingInfoEnum<DiagnosticOpts<"OvdlOpts">, "0">;

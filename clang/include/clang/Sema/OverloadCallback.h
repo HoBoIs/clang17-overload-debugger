@@ -2,7 +2,7 @@
 #define LLVM_CLANG_SEMA_OVERLOADCALLBACK_H
 
 #include "clang/Basic/SourceLocation.h"
-#include "clang/Sema/Sema.h"
+//#include "clang/Sema/Sema.h"
 #include "clang/Sema/Overload.h"
 #include "llvm/ADT/ArrayRef.h"
 #include <optional>
