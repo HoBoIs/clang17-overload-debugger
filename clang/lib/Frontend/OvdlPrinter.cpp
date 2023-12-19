@@ -293,7 +293,7 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   std::vector<CompareKind> compareResults;
   struct SetArgs{
     const OverloadCandidateSet* Set;
-    llvm::SmallVector<Expr*> inArgs={};
+    llvm::SmallVector<Expr*,0> inArgs={};
     const Expr* ObjectExpr=nullptr;
     SourceLocation EndLoc={};
     SourceLocation Loc={};
@@ -409,9 +409,8 @@ public:
       inCompare=false;
       return;
     }                    // EquivalentInternalLinkageDeclaration
-    for (const auto& E:compares){//Removeing duplicates
+    for (const auto& E:compares)//Removeing duplicates
       if (E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
-    }
     Entry.reason=str::toString(reason);
     const auto& callKinds=getCallKinds();
     if (reason==clang::betterConversion){
@@ -447,7 +446,8 @@ public:
     inCompare=false;
   }
 private:
-  SourceRange makeSR(const std::vector<SourceLocation>& begs,const std::vector<SourceLocation>& ends)const{
+  SourceRange makeSR(const std::vector<SourceLocation>& begs,
+                     const std::vector<SourceLocation>& ends)const{
     SourceLocation beg={};
     for (const auto& x:begs){
       if (x.isValid() && (beg.isInvalid()||x<beg))beg=x;
@@ -458,17 +458,20 @@ private:
     }
     return {beg,end};
   }
-  /*void printConvEntrys(const std::vector<OvdlConvEntry>& Entry)const {
-    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
-    unsigned ID1uninited=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
-    unsigned ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "");
-  }*/
   void printConvEntry(const OvInsConvEntry& Entry)const {
-    unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
-    unsigned ID1uninited=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
+    unsigned ID1=S->Diags.getDiagnosticIDs()->
+                  getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1\n%2");
+    unsigned ID1NoConvInfo=S->Diags.getDiagnosticIDs()->
+                  getCustomDiagID(DiagnosticIDs::Note, "%0 conversion: \n%1");
+    unsigned ID1uninited=S->Diags.getDiagnosticIDs()->
+                  getCustomDiagID(DiagnosticIDs::Note, "%0 conversion");
     if (Entry.convPath!="")
-      S->Diags.Report(Entry.src.range.getBegin(),ID1)<<Entry.kind<<Entry.convPath
+      if (Entry.convInfo!="")
+        S->Diags.Report(Entry.src.range.getBegin(),ID1)<<Entry.kind<<Entry.convPath
             <<Entry.convInfo<<Entry.src.range;
+      else
+        S->Diags.Report(Entry.src.range.getBegin(),ID1NoConvInfo)<<Entry.kind
+            <<Entry.convPath<<Entry.src.range;
     else
       S->Diags.Report(Entry.src.range.getBegin(),ID1uninited)<<Entry.kind
             <<Entry.src.range;
@@ -479,9 +482,8 @@ private:
     if (in.empty())return res;
     llvm::raw_string_ostream os(res);
     os<<'[';
-    for (size_t i=0; i<in.size()-1;++i){
+    for (size_t i=0; i<in.size()-1;++i)
       os<<in[i]<<sep;
-    }
     os<<in.back()<<']';
     return res;
   }
@@ -531,27 +533,21 @@ private:
     auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
     S->Diags.Report(Entry.callSrc.Loc, ID0)<<str::toString(Entry.ovRes)<<types<<Entry.note
               <<Entry.callSrc.range;
-    if (Entry.best){
+    if (Entry.best)
       printCandEntry(*Entry.best,"Best ");
-    }
-    for (const auto& x:Entry.problems){
+    for (const auto& x:Entry.problems)
       printCandEntry(x,Entry.ovRes==clang::OR_Ambiguous?"Ambigius ":"Unresolvable ");//OR unresolvable concept
-    }
-    for (const auto& x:Entry.viableCandidates){
+    for (const auto& x:Entry.viableCandidates)
       printCandEntry(x,"Viable ");
-    }
-    for (const auto& x:Entry.nonViableCandidates){
+    for (const auto& x:Entry.nonViableCandidates)
       printCandEntry(x,"Non viable ");
-    }
-    for (const auto& x:Entry.compares){
+    for (const auto& x:Entry.compares)
       printCompareEntry(x,Entry.callSrc.Loc);
-    }
     //Entry.note;;
   }
   void printHumanReadable() const {
-    for (const auto& x:cont){
+    for (const auto& x:cont)
       printResEntry(x.Entry);
-    }
   }
   const SetArgs& getSetArgs()const{
     auto it=SetArgMap.find(Set);
@@ -571,9 +567,8 @@ private:
     if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
       for (const auto& c:E.viableCandidates){
         if (!shouldSumm(c)) continue;
-        for (size_t i=0; i!=c.paramTypes.size(); i++){
+        for (size_t i=0; i!=c.paramTypes.size(); i++)
           types[i].emplace(c.paramTypes[i]);
-        }
       }
       if (types[0].empty() || types[1].empty() || !types[2].empty())
         return {};//Non bin op
@@ -665,11 +660,6 @@ private:
   std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
       const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,
       const std::vector<ExprValueKind>& vkarr)const{
-    /*bool isStaticCall=false;
-    if (auto *p=llvm::dyn_cast_or_null<CXXMethodDecl>(Cand1.Function)){
-      isStaticCall=p->isStatic() && Set->getObjectExpr()==nullptr&&
-                    !isa<CXXConstructorDecl>(Cand1.Function);
-    }*/
     bool isStaticCall=getSetArgs().ObjectExpr==nullptr&&
         (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
     ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
@@ -993,21 +983,12 @@ private:
       }
       return res;
     }
-    if (const auto *p = dyn_cast<UsingShadowDecl>(C.FoundDecl.getDecl())){
-      //res.declLoc=p->getTargetDecl()->getLocation();
-      //res.declLoc.print(declLoc,S->SourceMgr);
+    if (isa<UsingShadowDecl>(C.FoundDecl.getDecl())){
       res.usingLoc=C.FoundDecl.getDecl()->getLocation();
       res.usingLoc.print(usingLoc,S->SourceMgr);
-    }else{
-      //res.declLoc=C.FoundDecl.getDecl()->getLocation();
-      //res.declLoc.print(declLoc,S->SourceMgr);
     }
     res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
-      /*if (const auto* mp=dyn_cast<CXXMethodDecl>(C.Function)){
-        if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
-          res.signature=mp->getThisObjectType().getAsString()+"; ";
-      }*/
       res.paramTypes=getParamTypes(C);
       res.src=getSource(C);
       if (isTemplatedFun(C) && settings.ShowTemplateSpecs){
@@ -1214,8 +1195,10 @@ private:
                            const OverloadCandidate* BestOrProblem) {
     OvInsResEntry res;
     ArrayRef<Expr*> Args=getSetArgs().inArgs;
+    //Args can be reversed.
     sr=makeSR({
-          Loc,(Args.size()&&Args[0]?Args[0]->getBeginLoc():SourceLocation{})
+          Loc,(Args.size() && Args[0]?Args[0]->getBeginLoc():SourceLocation{}),
+          (Args.size() && Args.back()?Args.back()->getBeginLoc():SourceLocation{})
         },{
           Loc,(Args.size()&&Args[0]?Args[0]->getEndLoc():SourceLocation{}),
           (Args.size()&&Args.back()?Args.back()->getEndLoc():SourceLocation{}),

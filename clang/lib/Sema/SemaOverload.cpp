@@ -13817,8 +13817,8 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
 
   // Build an empty overload set.
   OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator);
-  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {ArrayRef{Args,NumArgs}});
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {ArgsArray});
 
   // Add the candidates from the given function set.
   AddNonMemberOperatorCandidates(Fns, ArgsArray, CandidateSet);
