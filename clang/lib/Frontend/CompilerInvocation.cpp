@@ -2548,6 +2548,8 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
       for (const auto&[from,to]:Opts.OvInsSettings.Intervals){
         os<<from<<"-"<<to<<",";
       }
+      if (Opts.OvInsSettings.FunName!="")
+        os<<"FunName:"<<Opts.OvInsSettings.FunName<<",";
       os<<(Opts.OvInsSettings.ShowEmptyOverloads?"Show":"Hide")<<"EmptyOverloads,"
         <<(Opts.OvInsSettings.ShowIncludes?"Show":"Hide")<<"Includes,"
         <<(Opts.OvInsSettings.ShowNonViableCands?"Show":"Hide")<<"NonViableCands,"
@@ -2557,7 +2559,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
         <<(Opts.OvInsSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
         <<OptPrefixes[Opts.OvInsSettings.ShowCompares]<<"Compares,"
         <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
-        <<(Opts.OvInsSettings.Help?"Help":"");
+        <<(Opts.OvInsSettings.Help?",Help":"");
       GenerateArg(Args, OPT_ovins_dump_opt,argStr,SA);
     };
 
@@ -2788,6 +2790,8 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvInsSettings.ShowTemplateSpecs=false;
         } else if (s=="Help"){
           Opts.OvInsSettings.Help=true;
+        } else if (s.substr(0,8)=="FunName:"){
+          Opts.OvInsSettings.FunName=s.substr(8);
         } else {
           unsigned lF=0;
           unsigned actual=0;

@@ -14,6 +14,7 @@
 #include "clang/Frontend/CommandLineSourceLoc.h"
 #include "clang/Sema/CodeCompleteOptions.h"
 #include "clang/Serialization/ModuleFileExtension.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -525,6 +526,7 @@ public:
 
   struct OvInsSettingsType{
     llvm::SmallVector<std::pair<unsigned,unsigned>,2> Intervals;
+    llvm::SmallString<10> FunName;
     unsigned ShowNonViableCands:1;
     unsigned ShowIncludes:1;
     unsigned ShowCompares:2;
@@ -551,7 +553,7 @@ public:
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         TimeTraceGranularity(500),
-        OvInsSettings({{},true,false,SC_Normal,false,false,SC_Normal,false,true,true,false}) {}
+        OvInsSettings({{},{},true,false,SC_Normal,false,false,SC_Normal,false,true,true,false}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.

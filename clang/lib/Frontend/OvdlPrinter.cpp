@@ -1,8 +1,10 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Frontend/OvInsEnumPrints.h"
+#include "clang/Sema/Overload.h"
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
 #include <deque>
@@ -357,6 +359,8 @@ public:
     }
     if (SetArgMap.find(&set)==SetArgMap.end())
       return;
+    //if (settings.FunName!="" && !set.empty() && nameEq(settings.FunName,set))
+    //  return;
     compares = {};
     inBestOC = true;
   }
@@ -376,7 +380,8 @@ public:
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);
     if (!node.Entry.isImplicit || settings.ShowImplicitConversions){
-      cont.add(node);
+      if (nameOk())
+        cont.add(node);
       //printResEntry(node.Entry);
     }
     inBestOC=false;
@@ -446,6 +451,24 @@ public:
     inCompare=false;
   }
 private:
+  bool nameOk()const{
+    if (settings.FunName.empty()) return true;
+    for (const auto& cand:*Set) {
+      //if (cand.Function && ! cand.IsSurrogate && 
+      //    cand.Function->getNameAsString()!=settings.FunName)
+      //  llvm::errs()<<cand.Function->getNameAsString()<<"\n";
+      if (cand.Function && ! cand.IsSurrogate && 
+          cand.Function->getNameAsString()==settings.FunName)
+        return true;
+      if (!cand.Function && !cand.IsSurrogate){
+        //TODO: get and comper OP-NAME
+      }
+      if (cand.IsSurrogate){
+        //TODO
+      }
+    }
+    return false;
+  }
   SourceRange makeSR(const std::vector<SourceLocation>& begs,
                      const std::vector<SourceLocation>& ends)const{
     SourceLocation beg={};

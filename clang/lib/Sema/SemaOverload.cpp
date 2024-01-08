@@ -545,7 +545,7 @@ LLVM_DUMP_METHOD void UserDefinedConversionSequence::dump() const {
 
 void UserDefinedConversionSequence::writeToStream(raw_ostream &OS) const {
   if (Before.First || Before.Second || Before.Third) {
-    Before.dump();
+    Before.writeToStream(OS);
     OS << " -> ";
   }
   if (ConversionFunction)
@@ -554,7 +554,7 @@ void UserDefinedConversionSequence::writeToStream(raw_ostream &OS) const {
     OS << "aggregate initialization";
   if (After.First || After.Second || After.Third) {
     OS << " -> ";
-    After.dump();
+    After.writeToStream(OS);
   }
 }
 
