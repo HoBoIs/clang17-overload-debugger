@@ -526,7 +526,8 @@ public:
 
   struct OvInsSettingsType{
     llvm::SmallVector<std::pair<unsigned,unsigned>,2> Intervals;
-    llvm::SmallString<10> FunName;
+    std::string CandFunName;
+    //std::string ContainedFunName;
     unsigned ShowNonViableCands:1;
     unsigned ShowIncludes:1;
     unsigned ShowCompares:2;

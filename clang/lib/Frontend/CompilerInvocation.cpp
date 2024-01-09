@@ -2548,8 +2548,8 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
       for (const auto&[from,to]:Opts.OvInsSettings.Intervals){
         os<<from<<"-"<<to<<",";
       }
-      if (Opts.OvInsSettings.FunName!="")
-        os<<"FunName:"<<Opts.OvInsSettings.FunName<<",";
+      if (Opts.OvInsSettings.CandFunName!="")
+        os<<"CandName:"<<Opts.OvInsSettings.CandFunName<<",";
       os<<(Opts.OvInsSettings.ShowEmptyOverloads?"Show":"Hide")<<"EmptyOverloads,"
         <<(Opts.OvInsSettings.ShowIncludes?"Show":"Hide")<<"Includes,"
         <<(Opts.OvInsSettings.ShowNonViableCands?"Show":"Hide")<<"NonViableCands,"
@@ -2790,8 +2790,8 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvInsSettings.ShowTemplateSpecs=false;
         } else if (s=="Help"){
           Opts.OvInsSettings.Help=true;
-        } else if (s.substr(0,8)=="FunName:"){
-          Opts.OvInsSettings.FunName=s.substr(8);
+        } else if (s.substr(0,9)=="CandName:"){
+          Opts.OvInsSettings.CandFunName=s.substr(9);
         } else {
           unsigned lF=0;
           unsigned actual=0;

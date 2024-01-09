@@ -6,6 +6,7 @@
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/YAMLTraits.h"
+#include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <deque>
 #include <iterator>
@@ -451,23 +452,51 @@ public:
     inCompare=false;
   }
 private:
+  bool checkPlace(SourceLocation loc)const{
+    PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
+    unsigned line=L.getLine();
+    if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
+        (!inSetInterval(line) && true) ){
+      return false;
+    }
+    return true;
+  }
   bool nameOk()const{
-    if (settings.FunName.empty()) return true;
+    bool qual=(settings.CandFunName.find("::")!=std::string::npos);
+    if (settings.CandFunName.empty()) return true;
     for (const auto& cand:*Set) {
-      //if (cand.Function && ! cand.IsSurrogate && 
-      //    cand.Function->getNameAsString()!=settings.FunName)
-      //  llvm::errs()<<cand.Function->getNameAsString()<<"\n";
       if (cand.Function && ! cand.IsSurrogate && 
-          cand.Function->getNameAsString()==settings.FunName)
+          checkName(settings.CandFunName,
+            qual?cand.Function->getQualifiedNameAsString()
+                :cand.Function->getNameAsString()))
         return true;
       if (!cand.Function && !cand.IsSurrogate){
-        //TODO: get and comper OP-NAME
+        std::string s;
+        llvm::raw_string_ostream os(s);
+        os<<"operator";
+        addBuiltinOpSpelling(os, cand);
+        if (checkName(settings.CandFunName,s))
+          return true;
       }
       if (cand.IsSurrogate){
-        //TODO
+        if (checkName(settings.CandFunName,
+            qual?cand.Surrogate->getQualifiedNameAsString()
+                :cand.Surrogate->getNameAsString()))
+          return true;
       }
     }
     return false;
+  }
+  bool checkName(const std::string& FunName, const std::string& candName)const {
+    size_t i=0,j=0;
+    //if (){}
+    while (i!=FunName.size() && j!=candName.size()){
+      if (FunName[i]==candName[j]) {++i;++j;}
+      else if (candName[j]==' ') ++j;//for operator T
+      else if (FunName[i]=='\'' && candName[j]==',') {++i;++j;}//for operator,
+      else return false;
+    }
+    return i==FunName.size() && j==candName.size();
   }
   SourceRange makeSR(const std::vector<SourceLocation>& begs,
                      const std::vector<SourceLocation>& ends)const{
@@ -614,13 +643,20 @@ private:
     return std::string(Lexer::getSourceText(
           range, S->getSourceManager(), S->getLangOpts()));
   }
-  std::string getBuiltInOperatorName(const OverloadCandidate& C)const{
+  void addBuiltinOpTypes(llvm::raw_string_ostream& os, const OverloadCandidate& C)const{
+    assert(Set->CSK_Operator == Set->getKind() && "Not operator");
+    os<<" (";
+    if (C.BuiltinParamTypes[0]!=QualType{})
+      os<<C.BuiltinParamTypes[0].getAsString();
+    if (C.BuiltinParamTypes[1]!=QualType{})
+      os<<", "<<C.BuiltinParamTypes[1].getAsString();
+    if (C.BuiltinParamTypes[2]!=QualType{})
+      os<<", "<<C.BuiltinParamTypes[2].getAsString();
+    os<<")";
+  }
+  void addBuiltinOpSpelling(llvm::raw_string_ostream& os, const OverloadCandidate& C)const{
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
     const char* cc=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
-    //Not handles all operators
-    std::string res;
-    llvm::raw_string_ostream os(res);
-    os<<"Built-in operator ";
     if (cc)
       os<<cc;
     else{
@@ -635,14 +671,15 @@ private:
       else
         os << s1;
     }
-    os<<" (";
-    if (C.BuiltinParamTypes[0]!=QualType{})
-      os<<C.BuiltinParamTypes[0].getAsString();
-    if (C.BuiltinParamTypes[1]!=QualType{})
-      os<<", "<<C.BuiltinParamTypes[1].getAsString();
-    if (C.BuiltinParamTypes[2]!=QualType{})
-      os<<", "<<C.BuiltinParamTypes[2].getAsString();
-    os<<")";
+  }
+  std::string getBuiltInOperatorName(const OverloadCandidate& C)const{
+    assert(Set->CSK_Operator == Set->getKind() && "Not operator");
+    //Not handles all operators
+    std::string res;
+    llvm::raw_string_ostream os(res);
+    os<<"Built-in operator ";
+    addBuiltinOpSpelling(os, C);
+    addBuiltinOpTypes(os, C);
     return res;
   }
   bool shouldSumm(const OvInsCandEntry& cand)const{
