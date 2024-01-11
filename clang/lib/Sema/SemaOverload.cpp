@@ -10103,14 +10103,6 @@ bool clang::isBetterOverloadCandidate(
       Result = CompareStandardConversionSequences(S, Loc,
                                                   Cand1.FinalConversion,
                                                   Cand2.FinalConversion);
-    /*if (Result == ImplicitConversionSequence::Worse){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,false,betterImplicitConversion);
-
-      return false;
-    }else if (Result == ImplicitConversionSequence::Better){
-      atCompareOverloadEnd(S.OverloadCallbacks,S,Loc,Cand1,Cand2,true,betterImplicitConversion);
-      return true;
-    }*/
     if (Result != ImplicitConversionSequence::Indistinguishable){
       if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
         atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
@@ -14108,7 +14100,7 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
   OverloadCandidateSet CandidateSet(OpLoc, OverloadCandidateSet::CSK_Operator,
                           OverloadCandidateSet::OperatorRewriteInfo(
                             Op, OpLoc, AllowRewrittenCandidates));//???
-  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
       addSetInfo(OverloadInspectionCallbacks, CandidateSet, {Args});
   if (DefaultedFn)
     CandidateSet.exclude(DefaultedFn);

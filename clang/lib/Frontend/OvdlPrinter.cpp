@@ -12,13 +12,15 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
+//#include <pstl/glue_execution_defs.h>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
-
+//TODO print info on rewriten candidates. 
+//handle REVERSED candides correctly
 using namespace clang;
 
 namespace {
@@ -45,7 +47,7 @@ struct OvInsSource{
   std::string source;
   std::string sourceLoc;
   bool operator==(const OvInsSource& o)const{
-    return range==o.range && source==o.source;
+    return range==o.range && source==o.source && Loc==o.Loc && sourceLoc==o.sourceLoc;
   };
 };
 struct OvInsConvEntry{
@@ -77,8 +79,10 @@ struct OvInsCandEntry{
   std::optional<std::string> extraFailInfo;
   std::vector<OvInsConvEntry> Conversions;
   std::deque<std::string> templateParams;
+  bool isBestOrProblem;
+  OverloadCandidateRewriteKind rewriteKind;
   bool operator==(const OvInsCandEntry& o) const{
-    return name == o.name &&
+    return name == o.name && src==o.src &&
       paramTypes == o.paramTypes && src == o.src &&
       failKind == o.failKind && extraFailInfo == o.extraFailInfo &&
       Conversions == o.Conversions;
@@ -256,6 +260,8 @@ const QualType getToType(const ImplicitConversionSequence& C){
   llvm_unreachable("Unknown ImplicitConversionSequence kind");
 }
 QualType getToType(const OverloadCandidate& C,int idx){
+  if (C.IsSurrogate && idx==0)
+      return C.Conversions[0].UserDefined.ConversionFunction->getReturnType();
   if (C.Function==nullptr)
     return getToType(C.Conversions[idx]);
   if (C.Conversions[idx].getKind()==ImplicitConversionSequence::Kind::EllipsisConversion)
@@ -338,10 +344,12 @@ public:
   virtual void initialize(const Sema&) override{};
   virtual void finalize(const Sema&) override{};
   virtual void atEnd() override{
-    for (auto& x:cont){
-      displayOvInsResEntry(llvm::outs(),x.Entry);
-    }
-    printHumanReadable();
+    if (settings.PrintYAML){
+      for (auto& x:cont)
+        displayOvInsResEntry(llvm::outs(),x.Entry);
+      llvm::outs()<<"...\n";
+    }else
+      printHumanReadable();
     cont={};
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
@@ -355,9 +363,8 @@ public:
     unsigned line=L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         !inSetInterval(line) ||
-        (!settings.ShowEmptyOverloads && set.empty())) {
+        (!settings.ShowEmptyOverloads && set.empty()))
       return;
-    }
     if (SetArgMap.find(&set)==SetArgMap.end())
       return;
     //if (settings.FunName!="" && !set.empty() && nameEq(settings.FunName,set))
@@ -390,7 +397,7 @@ public:
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
                                       const OverloadCandidate &C1,
                                       const OverloadCandidate &C2) override {
-    if (!inBestOC || !settings.ShowCompares) {return;}
+    if (!inBestOC || !settings.ShowCompares) return;
     inCompare=true;
   }
   virtual void atCompareOverloadEnd(const Sema &TheSema,
@@ -399,7 +406,7 @@ public:
                                     const OverloadCandidate &Cand2, bool res,
                                     BetterOverloadCandidateReason reason,
                                     int infoIdx) override {
-    if (!inBestOC || !settings.ShowCompares) {return;}
+    if (!inBestOC || !settings.ShowCompares) return;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
     if (!L.isValid() ||
         (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
@@ -441,6 +448,7 @@ public:
           inCompare=false;
           return;
         }else if (Other.C1Better == Entry.C1Better){
+          //TODO summarize them
           /*Ambigioty, keep both*/
         }else{ 
           inCompare=false;
@@ -529,14 +537,14 @@ private:
             <<Entry.src.range;
   }
   template<class T>
-  std::string concat(const T& in, const std::string& sep)const{
+  std::string concat(const T& in, const std::string& sep,char begin='[',char end=']')const{
     std::string res;
     if (in.empty())return res;
     llvm::raw_string_ostream os(res);
-    os<<'[';
+    os<<begin;
     for (size_t i=0; i<in.size()-1;++i)
       os<<in[i]<<sep;
-    os<<in.back()<<']';
+    os<<in.back()<<end;
     return res;
   }
   void printCompareEntry(const OvInsCompareEntry& Entry,SourceLocation loc) const{
@@ -547,17 +555,21 @@ private:
           <<Entry.reason<<(Entry.conversionCompares.empty()?
             "":"\n\tConversions:"+concat(Entry.conversionCompares,"\n\t"))
           <<(Entry.deciderConversion?"\n\tDeider: "+*Entry.deciderConversion:"");
-    printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better");
-    printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse");
+    printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better ");
+    printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse ");
   }
   void printCandEntry(const OvInsCandEntry& Entry,std::string nm="")const {
     unsigned ID1=S->Diags.getDiagnosticIDs()->
-            getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1 %2 %3 %4");
+            getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1 %2%3 %4 %5 %6");
     std::string temp=concat(Entry.templateParams,", ");
+    std::string paramTypes=concat(Entry.paramTypes, ", ",'(',')');
+    if (paramTypes.empty())
+      paramTypes="()";
     S->Diags.Report(Entry.src.Loc, ID1)<<nm<<Entry.name
+            <<paramTypes
             <<(temp==""?"":"\n\tTemplate params: "+temp)
             <<(Entry.failKind?"\n\tFailure reason: "+str::toString(*Entry.failKind):"")
-            <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")
+            <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")<<Entry.rewriteKind
             <<Entry.src.range;
     if (0)//!SUMARIZE convs
       for (const auto& x:Entry.Conversions)
@@ -590,9 +602,11 @@ private:
     for (const auto& x:Entry.problems)
       printCandEntry(x,Entry.ovRes==clang::OR_Ambiguous?"Ambigius ":"Unresolvable ");//OR unresolvable concept
     for (const auto& x:Entry.viableCandidates)
-      printCandEntry(x,"Viable ");
+      if (!x.isBestOrProblem)
+        printCandEntry(x,"Viable ");
     for (const auto& x:Entry.nonViableCandidates)
-      printCandEntry(x,"Non viable ");
+      if (!x.isBestOrProblem)
+        printCandEntry(x,"Non viable ");
     for (const auto& x:Entry.compares)
       printCompareEntry(x,Entry.callSrc.Loc);
     //Entry.note;;
@@ -643,7 +657,7 @@ private:
     return std::string(Lexer::getSourceText(
           range, S->getSourceManager(), S->getLangOpts()));
   }
-  void addBuiltinOpTypes(llvm::raw_string_ostream& os, const OverloadCandidate& C)const{
+  /*void addBuiltinOpTypes(llvm::raw_string_ostream& os, const OverloadCandidate& C)const{
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
     os<<" (";
     if (C.BuiltinParamTypes[0]!=QualType{})
@@ -653,7 +667,7 @@ private:
     if (C.BuiltinParamTypes[2]!=QualType{})
       os<<", "<<C.BuiltinParamTypes[2].getAsString();
     os<<")";
-  }
+  }*/
   void addBuiltinOpSpelling(llvm::raw_string_ostream& os, const OverloadCandidate& C)const{
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
     const char* cc=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
@@ -677,9 +691,9 @@ private:
     //Not handles all operators
     std::string res;
     llvm::raw_string_ostream os(res);
-    os<<"Built-in operator ";
+    os<<"Built-in operator";
     addBuiltinOpSpelling(os, C);
-    addBuiltinOpTypes(os, C);
+    //addBuiltinOpTypes(os, C);
     return res;
   }
   bool shouldSumm(const OvInsCandEntry& cand)const{
@@ -944,6 +958,8 @@ private:
           path << " -> " << conv.UserDefined.After.getFromType().getCanonicalType().getAsString();
         if (C.Function && idx!=-1&& !isa<clang::InitListExpr>(setArg.inArgs[idx]))
           path << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
+        else if (C.IsSurrogate && idx==-1)
+          path << " -> " << conv.UserDefined.ConversionFunction->getReturnType().getCanonicalType().getAsString();
         else
           path << " -> " << conv.UserDefined.After.getToType(2).getCanonicalType().getAsString();
         break;
@@ -964,9 +980,9 @@ private:
         break;
       }
       if (C.Function /*&& !C.IsSurrogate*/){
-      std::string temp=getTemplatedParamForConversion(C, i);
-      if (temp!="")
-        path<<" = "<<temp;
+        std::string temp=getTemplatedParamForConversion(C, i);
+        if (temp!="")
+          path<<" = "<<temp;
       }
     }
 
@@ -1004,6 +1020,7 @@ private:
   }
   OvInsCandEntry getCandEntry(const OverloadCandidate &C)const {
     OvInsCandEntry res;
+    res.isBestOrProblem=C.Best;
     llvm::raw_string_ostream usingLoc(res.usingLocation);
     if (settings.ShowConversions){
       res.Conversions=getConversions(C);//FIXME
@@ -1017,11 +1034,10 @@ private:
 //    llvm::raw_string_ostream signature(res.signature);
     if (C.IsSurrogate){
 
-      if (C.FoundDecl.getDecl()){
-        res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
-      }else{
-        res.name={C.Surrogate->getNameAsString()};
-      }
+      if (C.FoundDecl.getDecl())
+        res.name="Surrogate from " +C.FoundDecl.getDecl()->getQualifiedNameAsString();
+      else
+        res.name="Surrogate from " + C.Surrogate->getQualifiedNameAsString();
       res.paramTypes=getSurrSignature(C);
       res.isSurrogate=true;
       res.src.Loc=C.Surrogate->getLocation();
@@ -1034,20 +1050,19 @@ private:
       res.src.sourceLoc="Built-in";
       res.src.Loc={};
       res.name="";
-      if (Set->getKind()==Set->CSK_Operator){
+      if (Set->getKind()==Set->CSK_Operator)
         res.name=getBuiltInOperatorName(C);
-      }
-      for (const auto& tmp:C.BuiltinParamTypes){
+      for (const auto& tmp:C.BuiltinParamTypes)
         if (tmp != QualType{})
           res.paramTypes.push_back(tmp.getAsString());
-      }
       return res;
     }
     if (isa<UsingShadowDecl>(C.FoundDecl.getDecl())){
       res.usingLoc=C.FoundDecl.getDecl()->getLocation();
       res.usingLoc.print(usingLoc,S->SourceMgr);
     }
-    res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
+    res.rewriteKind=C.getRewriteKind();
+    res.name=(C.isReversed()?"Reversed from ":"")+C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
       res.paramTypes=getParamTypes(C);
       res.src=getSource(C);
@@ -1060,9 +1075,8 @@ private:
   }
   std::vector<OvInsTemplateSpec> getSpecializations(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
-    while (isa<UsingShadowDecl>(nd)){
+    while (isa<UsingShadowDecl>(nd))
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-    }
     const FunctionDecl* f=nd->getAsFunction();
     std::vector<OvInsTemplateSpec> res;
     for (const auto* x:f->getDescribedFunctionTemplate()->specializations()){
@@ -1071,13 +1085,12 @@ private:
         entry.isExact=true;
         entry.src=getSrcFromRange({x->getLocation(),x->getTypeSpecEndLoc()});
         if (x->getTemplateSpecializationArgs() && C.Function->getTemplateSpecializationArgs()){
-        const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
-        const auto genericArgs =  C.Function->getTemplateSpecializationArgs()->asArray();
-        int midx=std::min(specializedArgs.size(),genericArgs.size());
-        entry.isExact= genericArgs.size()==specializedArgs.size();
-        for(int i=0; i!=midx;++i){
-          entry.isExact=entry.isExact && specializedArgs[i].structurallyEquals(genericArgs[i]);
-        }
+          const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
+          const auto genericArgs =  C.Function->getTemplateSpecializationArgs()->asArray();
+          int midx=std::min(specializedArgs.size(),genericArgs.size());
+          entry.isExact= genericArgs.size()==specializedArgs.size();
+          for(int i=0; i!=midx;++i)
+            entry.isExact=entry.isExact && specializedArgs[i].structurallyEquals(genericArgs[i]);
         }else 
           entry.isExact=false;
         if (entry.isExact && !C.Best && !inCompare){
@@ -1124,9 +1137,8 @@ private:
     SourceLocation l0;
     if (t) {
       t->getAssociatedConstraints(AC);
-      if (AC.size()){
+      if (AC.size())
         l0=AC.back()->getEndLoc();
-      }
     }
     if (l0>r.getEnd())
       r.setEnd(l0);
@@ -1134,18 +1146,16 @@ private:
   }
   bool isTemplatedFun(const OverloadCandidate& C)const{
     const NamedDecl* nd=C.FoundDecl.getDecl();
-    while (isa<UsingShadowDecl>(nd)){
+    while (isa<UsingShadowDecl>(nd))
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-    }
     const FunctionDecl* f=nd->getAsFunction();
     return f&&f->isTemplated();
   }
   OvInsSource getSource(const OverloadCandidate& C)const{
     //if (C.IsSurrogate) return {"",{}};
     const NamedDecl* nd=C.FoundDecl.getDecl();
-    while (isa<UsingShadowDecl>(nd)){
+    while (isa<UsingShadowDecl>(nd))
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-    }
     const FunctionDecl* f=nd->getAsFunction();
     if (!f) return {};
     if (f->isTemplated() ) 
@@ -1154,34 +1164,29 @@ private:
     //return f->getSourceRange();
   }
   QualType getThisType(const OverloadCandidate& C)const{
-    if (const auto* mp=llvm::dyn_cast_or_null<CXXMethodDecl>(C.Function)){
+    if (const auto* mp=llvm::dyn_cast_or_null<CXXMethodDecl>(C.Function))
       if (mp->isInstance()&&!isa<CXXConstructorDecl>(mp))
         return mp->getThisType();
-    }
     return QualType{};
   }
   std::string getTemplatedParamForConversion(const OverloadCandidate& C,int i)const{
-    if (C.IsSurrogate){
+    if (C.IsSurrogate)
       return {};//Not sure if needed
-    }
-    if (C.Function==nullptr){
+    if (C.Function==nullptr)
       return {};
-    }
     if (C.Function && isa<CXXMethodDecl>(C.Function) &&
         !isa<CXXConstructorDecl>(C.Function))
       --i;
     const NamedDecl* nd=C.FoundDecl.getDecl();
-    while (isa<UsingShadowDecl>(nd)){
+    while (isa<UsingShadowDecl>(nd))
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-    }
     const FunctionDecl* f=nd->getAsFunction();
     std::vector<std::string> res;
     if (!f||!f->isTemplated() ) return {};
     const auto params=f->parameters();
     if (i<0) return{};
-    if ((unsigned)i<params.size() && params[i]->isTemplated()){
+    if ((unsigned)i<params.size() && params[i]->isTemplated())
       return params[i]->getType().getAsString();
-    }
     return {};
   }
   std::deque<std::string> getTemplateParams(const OverloadCandidate& C)const{
@@ -1189,16 +1194,14 @@ private:
     if (C.Function==nullptr)
       return {};
     const auto *templateArgs =  C.Function->getTemplateSpecializationArgs();
-    if (auto*ptemplates=C.Function->getPrimaryTemplate()){
-      if (ptemplates->getTemplateParameters()){
+    if (auto*ptemplates=C.Function->getPrimaryTemplate())
+      if (ptemplates->getTemplateParameters())
         for (size_t i=0; i<templateArgs->size();++i){
           res.push_back({});
           llvm::raw_string_ostream os(res.back());
           os<<ptemplates->getTemplateParameters()->asArray()[i]->getNameAsString()<<" = ";
           templateArgs->data()[i].dump(os);
         }
-      }
-    }
     return res;
   };
   std::vector<std::tuple<QualType,bool>> getSignatureTypes(const OverloadCandidate& C)const{
@@ -1206,15 +1209,13 @@ private:
       return {};
     std::vector<std::tuple<QualType,bool>> res;
     QualType thisType=getThisType(C);
-    if (thisType!=QualType{}){
+    if (thisType!=QualType{})
       res.emplace_back(std::tuple{thisType,false});
-    }
-    if (!C.Function->param_empty()){
+    if (!C.Function->param_empty())
       for (size_t i=0;i!=C.Function->param_size();++i){
         const auto& x=C.Function->parameters()[i];
         res.emplace_back(x->getType(),x->hasDefaultArg());
       }
-    }
     return res;
   }
   std::deque<std::string> getParamTypes(const OverloadCandidate& C) const{
@@ -1238,16 +1239,14 @@ private:
   }
   std::vector<ExprValueKind> getCallKinds()const{
     std::vector<ExprValueKind> res;
-    if (const Expr* Oe=getSetArgs().ObjectExpr){
+    if (const Expr* Oe=getSetArgs().ObjectExpr)
       res.push_back(Oe->getValueKind());
-    }
     auto Args=getSetArgs().inArgs;
     /*if (Args.size()==1&&isa<clang::InitListExpr>(Args[0])){
       Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
     }*/
-    for (const auto *Arg:Args){
+    for (const auto *Arg:Args)
       res.push_back(Arg->getValueKind());
-    }
     return res;
   }
   SourceRange sr;
@@ -1301,9 +1300,8 @@ private:
       else
         res.callTypes.push_back(x->getType().getCanonicalType().getAsString());
     }
-    for (size_t i=0; i!=callKinds.size();++i){
+    for (size_t i=0; i!=callKinds.size();++i)
       res.callTypes[i]+=Kinds[callKinds[i]];
-    }
     for (const auto& cand:*Set){
       if (cand.Viable)
         addCand(res.viableCandidates,getCandEntry(cand));
@@ -1315,11 +1313,10 @@ private:
     }
     return res;
   }
-  void addCand(std::vector<OvInsCandEntry>& v,const OvInsCandEntry& cand)const{
-    for (const auto&c:v){
+  void addCand(std::vector<OvInsCandEntry>& v,OvInsCandEntry&& cand)const{
+    for (const auto&c:v)
       if (c==cand) return;
-    }
-    v.emplace_back(std::move(cand));
+    v.emplace_back(cand);
   }
 };
 }//namespace
