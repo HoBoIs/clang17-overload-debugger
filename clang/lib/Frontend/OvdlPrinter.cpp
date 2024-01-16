@@ -1,3 +1,4 @@
+#include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Frontend/OvInsEnumPrints.h"
@@ -19,8 +20,6 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
-//TODO print info on rewriten candidates. 
-//handle REVERSED candides correctly
 using namespace clang;
 
 namespace {
@@ -155,6 +154,7 @@ template <> struct MappingTraits<OvInsTemplateSpec>{
 template <> struct MappingTraits<OvInsCandEntry>{
   static void mapping(IO& io, OvInsCandEntry& fields){
     io.mapRequired("Name",fields.name);
+    io.mapOptional("RewriteInfo",fields.rewriteKind,CRK_None);
     io.mapOptional("TemplateParams",fields.templateParams);
     io.mapRequired("ParamTypes",fields.paramTypes);
     io.mapRequired("declLocation",fields.src.sourceLoc);
@@ -260,6 +260,8 @@ const QualType getToType(const ImplicitConversionSequence& C){
   llvm_unreachable("Unknown ImplicitConversionSequence kind");
 }
 QualType getToType(const OverloadCandidate& C,int idx){
+  if (C.isReversed())
+    idx=1-idx;
   if (C.IsSurrogate && idx==0)
       return C.Conversions[0].UserDefined.ConversionFunction->getReturnType();
   if (C.Function==nullptr)
@@ -307,6 +309,7 @@ class DefaultOverloadInstCallback:public OverloadCallback{
     SourceLocation EndLoc={};
     SourceLocation Loc={};
     bool valid=0;
+    bool isImplicit=false;
   };
   std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
 public:
@@ -329,6 +332,8 @@ public:
     if (S.EndLoc)
       SetArgMap[&Set].EndLoc=*S.EndLoc;
     SetArgMap[&Set].Loc=Set.getLocation();
+    if (S.isImplicit)
+      SetArgMap[&Set].isImplicit=*S.isImplicit;
   };
   virtual bool needAllCompareInfo() const override{
     return settings.ShowConversions==clang::FrontendOptions::SC_Verbose &&
@@ -367,6 +372,8 @@ public:
       return;
     if (SetArgMap.find(&set)==SetArgMap.end())
       return;
+    if (getSetArgs().isImplicit && !settings.ShowImplicitConversions)return;
+    //if (getSetArgs().inArgs.size()==0 && getSetArgs().ObjectExpr==nullptr)return;
     //if (settings.FunName!="" && !set.empty() && nameEq(settings.FunName,set))
     //  return;
     compares = {};
@@ -560,16 +567,17 @@ private:
   }
   void printCandEntry(const OvInsCandEntry& Entry,std::string nm="")const {
     unsigned ID1=S->Diags.getDiagnosticIDs()->
-            getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1 %2%3 %4 %5 %6");
+            getCustomDiagID(DiagnosticIDs::Note, "%0candidate: %1%2 %3%4 %5 %6");
     std::string temp=concat(Entry.templateParams,", ");
     std::string paramTypes=concat(Entry.paramTypes, ", ",'(',')');
     if (paramTypes.empty())
       paramTypes="()";
-    S->Diags.Report(Entry.src.Loc, ID1)<<nm<<Entry.name
+    S->Diags.Report(Entry.src.Loc, ID1)<<nm<<str::toString(Entry.rewriteKind)
+            <<Entry.name
             <<paramTypes
             <<(temp==""?"":"\n\tTemplate params: "+temp)
             <<(Entry.failKind?"\n\tFailure reason: "+str::toString(*Entry.failKind):"")
-            <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")<<Entry.rewriteKind
+            <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")
             <<Entry.src.range;
     if (0)//!SUMARIZE convs
       for (const auto& x:Entry.Conversions)
@@ -736,7 +744,7 @@ private:
       const std::vector<ExprValueKind>& vkarr)const{
     bool isStaticCall=getSetArgs().ObjectExpr==nullptr&&
         (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
-    ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
+    ExprValueKind vk=idx<isStaticCall+(int)vkarr.size()?(idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue):VK_LValue;
     const static char compareSigns[]{'>','=','<'};
     std::string res;
     llvm::raw_string_ostream os(res);
@@ -909,8 +917,8 @@ private:
     const SetArgs& setArg=getSetArgs();
     bool isStaticCall=setArg.ObjectExpr==nullptr&&C.IgnoreObjectArgument;
     for (size_t i=0; i<C.Conversions.size();++i){
-      const ExprValueKind fromKind=
-            (i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue;
+      const ExprValueKind fromKind=(callKinds.size()>i-isStaticCall)? 
+            ((i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue):VK_LValue;
       const auto& conv=C.Conversions[i];
       OvInsConvEntry& actual=res[i];
       {
@@ -926,6 +934,8 @@ private:
         continue;
       }
       int idx=i;
+      if (C.isReversed())
+        idx=1-idx;
       if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
           !isa<CXXConstructorDecl>(C.Function)) ||
           C.IsSurrogate)
@@ -1062,7 +1072,9 @@ private:
       res.usingLoc.print(usingLoc,S->SourceMgr);
     }
     res.rewriteKind=C.getRewriteKind();
-    res.name=(C.isReversed()?"Reversed from ":"")+C.FoundDecl.getDecl()->getQualifiedNameAsString();
+    if (!C.Function && !C.IsSurrogate)
+      res.rewriteKind=OverloadCandidateRewriteKind::CRK_None;
+    res.name=/*(C.isReversed()?"Reversed from ":"")+*/C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
       res.paramTypes=getParamTypes(C);
       res.src=getSource(C);
@@ -1264,6 +1276,10 @@ private:
           getSetArgs().EndLoc
         });
     
+    res.isImplicit=getSetArgs().isImplicit;
+      ((Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() &&
+                    Args[0]->getEndLoc()==sr.getEnd()) || (Set->getKind() == Set->CandidateSetKind::CSK_InitByUserDefinedConversion);
+    res.callSrc=getSrcFromRange(sr);
     res.ovRes=ovres;
     if (ovres==OR_Success) {
       res.best=getCandEntry(*BestOrProblem);
@@ -1280,10 +1296,7 @@ private:
       if (BestOrProblem)
         res.problems={getCandEntry(*BestOrProblem)};
     }
-    res.callSrc=getSrcFromRange(sr);
     res.callSrc.Loc=Loc;
-    res.isImplicit=(Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() &&
-                    Args[0]->getEndLoc()==sr.getEnd();
     const auto& callKinds=getCallKinds();
     if (const Expr* Oe=getSetArgs().ObjectExpr) {
       QualType objType;

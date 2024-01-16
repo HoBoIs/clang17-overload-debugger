@@ -3454,8 +3454,8 @@ Sema::SpecialMemberOverloadResult Sema::LookupSpecialMember(CXXRecordDecl *RD,
   // resolution. Lookup is only performed directly into the class since there
   // will always be a (possibly implicit) declaration to shadow any others.
   OverloadCandidateSet OCS(LookupLoc, OverloadCandidateSet::CSK_Normal);
-  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(OverloadInspectionCallbacks, OCS,{Arg});
+  //if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//Removed, no actual overload called
+  //  addSetInfo(OverloadInspectionCallbacks, OCS,{Arg});
   DeclContext::lookup_result R = RD->lookup(Name);
 
   if (R.empty()) {

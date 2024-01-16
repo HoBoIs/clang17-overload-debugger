@@ -19,6 +19,7 @@ struct SetInfo{
   std::optional<const ArrayRef<Expr*>> Args={};
   std::optional<const SourceLocation> EndLoc={};
   std::optional<const Expr*> ObjectExpr={};
+  std::optional<bool> isImplicit=false;
 };
 
 class OverloadCallback{

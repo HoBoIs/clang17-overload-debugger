@@ -1458,8 +1458,9 @@ TryUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
   // Attempt user-defined conversion.
   OverloadCandidateSet Conversions(From->getExprLoc(),
                                    OverloadCandidateSet::CSK_Normal);
-  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(S.OverloadInspectionCallbacks, Conversions, {From});
+  if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty() )){
+      addSetInfo(S.OverloadInspectionCallbacks, Conversions, {From,{},{},AllowExplicit==AllowedExplicit::None});
+  }
   switch (IsUserDefinedConversion(S, From, ToType, ICS.UserDefined,
                                   Conversions, AllowExplicit,
                                   AllowObjCConversionOnExplicit)) {
@@ -4766,7 +4767,7 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
   OverloadCandidateSet CandidateSet(
       DeclLoc, OverloadCandidateSet::CSK_InitByUserDefinedConversion);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {Init});
+    addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {Init,{},{},!AllowExplicit});
   const auto &Conversions = T2RecordDecl->getVisibleConversionFunctions();
   for (auto I = Conversions.begin(), E = Conversions.end(); I != E; ++I) {
     NamedDecl *D = *I;
@@ -6376,7 +6377,7 @@ ExprResult Sema::PerformContextualImplicitConversion(
     // potentially viable conversions.
     OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
     if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {From,From->getEndLoc()});
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {From,From->getEndLoc(),{},true});
     collectViableConversionCandidates(*this, From, ToType, ViableConversions,
                                       CandidateSet);
 
