@@ -89,14 +89,16 @@ struct OvInsCandEntry{
 };
 struct OvInsCompareEntry {
   OvInsCandEntry C1,C2;
-  std::string reason;
+  BetterOverloadCandidateReason reason;
   bool C1Better;
   std::optional<std::string> deciderConversion;
+  std::optional<std::string> opposerConversion;
   std::vector<std::string> conversionCompares;
   bool operator==(const OvInsCompareEntry& o)const{
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
       C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
-      conversionCompares == o.conversionCompares;
+      conversionCompares == o.conversionCompares && 
+      opposerConversion==o.opposerConversion;
   }
 };
 
@@ -187,6 +189,7 @@ template <> struct MappingTraits<OvInsCompareEntry>{
     io.mapRequired("reason",fields.reason);
     io.mapOptional("Conversions", fields.conversionCompares);
     io.mapOptional("Decider", fields.deciderConversion);
+    io.mapOptional("Decider2", fields.opposerConversion);
   }
 };
 template <> struct MappingTraits<OvInsResEntry>{
@@ -431,12 +434,12 @@ public:
     }                    // EquivalentInternalLinkageDeclaration
     for (const auto& E:compares)//Removeing duplicates
       if (E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
-    Entry.reason=str::toString(reason);
+    Entry.reason=reason;
     const auto& callKinds=getCallKinds();
     if (reason==clang::betterConversion){
       Entry.deciderConversion = ConversionCompareAsString(Cand1,Cand2,infoIdx,
         res?CompareKind::Better:CompareKind::Worse,callKinds) +
-        "    Place: "+std::to_string(infoIdx+1);
+        "\tPlace: "+std::to_string(infoIdx+1);
     }else if (reason==clang::badConversion){
       Entry.deciderConversion =
         getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
@@ -451,16 +454,20 @@ public:
     for (auto &Other : compares) { // Removeing mirrors
       if (Other.C1==Entry.C2 && Other.C2==Entry.C1){
         if (!Other.C1Better && Entry.C1Better){
-          Other=Entry;//Keep the one where C1 is better
-          inCompare=false;
-          return;
+          Other=std::move(Entry);//Keep the one where C1 is better
         }else if (Other.C1Better == Entry.C1Better){
-          //TODO summarize them
-          /*Ambigioty, keep both*/
-        }else{ 
-          inCompare=false;
-          return;
+          assert(Other.reason==Entry.reason && "reasons must be the same");
+          assert(!Entry.C1Better && "Both can't be better then the other");
+          if (Entry.reason==badConversion){
+            Other.opposerConversion=flipAroundLess(*Entry.deciderConversion);
+          } else if (Entry.reason==betterConversion){
+            Other.opposerConversion=flipAroundLess(*Entry.deciderConversion);
+          } else {
+            assert(Entry.reason==inconclusive && "Unexpected reason of ambiguity");
+          }
         }
+        inCompare=false;
+        return;
       }
     }
     compares.push_back(Entry);
@@ -504,14 +511,22 @@ private:
   }
   bool checkName(const std::string& FunName, const std::string& candName)const {
     size_t i=0,j=0;
-    //if (){}
     while (i!=FunName.size() && j!=candName.size()){
       if (FunName[i]==candName[j]) {++i;++j;}
+      else if (candName[j]==' ' && FunName[i]=='~') {++i; ++j;}
       else if (candName[j]==' ') ++j;//for operator T
       else if (FunName[i]=='\'' && candName[j]==',') {++i;++j;}//for operator,
+      else if (FunName.size()==j+5&& FunName.substr(j)=="Comma"  && candName[j]==',') {++i;j+=5;}//for operator,
       else return false;
     }
     return i==FunName.size() && j==candName.size();
+  }
+  std::string flipAroundLess(const std::string& s)const{
+    auto lessPos=s.find("\t<\t");
+    auto placePos=s.find("\tPlace:");
+    return s.substr(lessPos+3,placePos-(lessPos+3))+
+            "\t>\t"+s.substr(0,lessPos)+
+            s.substr(placePos);
   }
   SourceRange makeSR(const std::vector<SourceLocation>& begs,
                      const std::vector<SourceLocation>& ends)const{
@@ -556,12 +571,13 @@ private:
   }
   void printCompareEntry(const OvInsCompareEntry& Entry,SourceLocation loc) const{
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note,
-          "Compearing candidates resulted in %0 reason: %1 %2 %3");
+          "Compearing candidates resulted in %0 (reason: %1) %2 %3%4");
     S->Diags.Report(loc,ID1)<<(Entry.C1Better?
           "The first is better":"The first is not better")
-          <<Entry.reason<<(Entry.conversionCompares.empty()?
+          <<str::toString(Entry.reason)<<(Entry.conversionCompares.empty()?
             "":"\n\tConversions:"+concat(Entry.conversionCompares,"\n\t"))
-          <<(Entry.deciderConversion?"\n\tDeider: "+*Entry.deciderConversion:"");
+          <<(Entry.deciderConversion?"\n\tDecider: "+*Entry.deciderConversion:"")
+          <<(Entry.opposerConversion?"\n\tBut: "+*Entry.opposerConversion:"");
     printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better ");
     printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse ");
   }

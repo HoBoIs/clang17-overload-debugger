@@ -10184,16 +10184,18 @@ bool clang::isBetterOverloadCandidate(
       if (S.IsAtLeastAsConstrained(Function1, RC1, Function2, RC2,
                                    AtLeastAsConstrained1) ||
           S.IsAtLeastAsConstrained(Function2, RC2, Function1, RC1,
-                                   AtLeastAsConstrained2))
+                                   AtLeastAsConstrained2)){
       	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
         	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,
                             false,moreSpecialized);
         return false;
-      if (AtLeastAsConstrained1 != AtLeastAsConstrained2)
+      }
+      if (AtLeastAsConstrained1 != AtLeastAsConstrained2){
       	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
         	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
             Cand1,Cand2,AtLeastAsConstrained1,moreSpecialized);
         return AtLeastAsConstrained1;
+      }
     } else if (RC1 || RC2) {
       	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
         	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,
