@@ -10367,7 +10367,7 @@ bool clang::isBetterOverloadCandidate(
 /// declarations visible to be ambiguous in some cases (this happens when using
 /// a modularized libstdc++).
 bool Sema::isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
-                                                  const NamedDecl *B) {
+                                                  const NamedDecl *B) const {
   auto *VA = dyn_cast_or_null<ValueDecl>(A);
   auto *VB = dyn_cast_or_null<ValueDecl>(B);
   if (!VA || !VB)
@@ -10519,13 +10519,12 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
 
   // Make sure that this function is better than every other viable
   // function. If not, we have an ambiguity.
-  //OverloadCandidate* AmbiguotyReasons[2];
   while (!PendingBest.empty()) {
     auto *Curr = PendingBest.pop_back_val();
     for (auto *Cand : Candidates) {
       if (Cand->Viable && !Cand->Best &&
           !isBetterOverloadCandidate(S, *Curr, *Cand, Loc, Kind)) {
-        PendingBest.push_back(Cand);
+        PendingBest.push_back(Cand);//move into the else
         Cand->Best = true;
 
         if (S.isEquivalentInternalLinkageDeclaration(Cand->Function,
@@ -10533,9 +10532,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
           Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	      }else{
-                //AmbiguotyReasons[0] = Curr;
-                //AmbiguotyReasons[1] = Cand;
-                Best = end();
+          Best = end();
         }
       }
     }

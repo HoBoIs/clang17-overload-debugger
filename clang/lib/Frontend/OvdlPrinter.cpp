@@ -1,3 +1,4 @@
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -9,6 +10,7 @@
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <iterator>
 #include <numeric>
@@ -94,6 +96,7 @@ struct OvInsCompareEntry {
   std::optional<std::string> deciderConversion;
   std::optional<std::string> opposerConversion;
   std::vector<std::string> conversionCompares;
+  long duration;
   bool operator==(const OvInsCompareEntry& o)const{
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
       C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
@@ -112,6 +115,7 @@ struct OvInsResEntry{
   std::deque<std::string> callTypes;
   std::string note;
   bool isImplicit=false;
+  long passedTime;
 };
 struct OvInsResNode{
   OvInsResEntry Entry;
@@ -190,6 +194,7 @@ template <> struct MappingTraits<OvInsCompareEntry>{
     io.mapOptional("Conversions", fields.conversionCompares);
     io.mapOptional("Decider", fields.deciderConversion);
     io.mapOptional("Decider2", fields.opposerConversion);
+    io.mapRequired("nanoseconds",fields.duration);
   }
 };
 template <> struct MappingTraits<OvInsResEntry>{
@@ -205,6 +210,7 @@ template <> struct MappingTraits<OvInsResEntry>{
     io.mapOptional("compares",fields.compares);
     io.mapOptional("Implicit",fields.isImplicit,false);
     io.mapOptional("note",fields.note,"");
+    io.mapOptional("nanoseconds",fields.passedTime,0);
   }
 };
 
@@ -294,6 +300,22 @@ void displayOvInsResEntry(llvm::raw_ostream& Out,OvInsResEntry& Entry){
   Out<<"---"<<YAML<<"\n";
 }
 class DefaultOverloadInstCallback:public OverloadCallback{
+  struct cmpInfo{
+    const Sema &TheSema;
+    const SourceLocation Loc;
+    const OverloadCandidate &Cand1;
+    const OverloadCandidate &Cand2; 
+    bool res;
+    BetterOverloadCandidateReason reason;
+    int infoIdx;
+    long duration;
+    bool sameCands(const cmpInfo&o)const{
+      return &Cand1==&o.Cand1 && &Cand2==&o.Cand2;
+    }
+    bool mirroredCands(const cmpInfo&o)const{
+      return &Cand2==&o.Cand1 && &Cand1==&o.Cand2;
+    }
+  };
   using CompareKind = clang::ImplicitConversionSequence::CompareKind;
   static constexpr llvm::StringLiteral Kinds[]={"[temporary]","","&&"};
   const Sema* S=nullptr;
@@ -301,10 +323,12 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   bool inCompare=false;
   const OverloadCandidateSet* Set=nullptr;
   SourceLocation Loc={};
-  std::vector<OvInsCompareEntry> compares;
+  //std::vector<OvInsCompareEntry> compares;
+  std::vector<cmpInfo> compares;
   OvInsResCont cont;
   clang::FrontendOptions::OvInsSettingsType settings;
   std::vector<CompareKind> compareResults;
+  int cntPar=0,maxCnt=1;
   struct SetArgs{
     const OverloadCandidateSet* Set;
     llvm::SmallVector<Expr*,0> inArgs={};
@@ -314,7 +338,10 @@ class DefaultOverloadInstCallback:public OverloadCallback{
     bool valid=0;
     bool isImplicit=false;
   };
+  std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
+  std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet*, SetArgs> SetArgMap;
+
 public:
   virtual void addSetInfo(const OverloadCandidateSet& Set,const SetInfo& S)override{
     SetArgMap[&Set].Set=&Set;
@@ -379,20 +406,32 @@ public:
     //if (getSetArgs().inArgs.size()==0 && getSetArgs().ObjectExpr==nullptr)return;
     //if (settings.FunName!="" && !set.empty() && nameEq(settings.FunName,set))
     //  return;
-    compares = {};
+    compares.clear();
     inBestOC = true;
+    ++cntPar;
+    /*llvm::sys::TimePoint<> now;
+    std::chrono::nanoseconds user, sys;
+    llvm::sys::Process::GetTimeUsage(now, user, sys);
+    if (user != std::chrono::nanoseconds::zero())
+      now = llvm::sys::TimePoint<>(user);
+
+    using Seconds = std::chrono::duration<double, std::ratio<1>>;
+    double startTime = Seconds(now.time_since_epoch()).count();*/
+    ovStartTime =std::chrono::steady_clock().now();
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
         const OverloadCandidateSet& set, OverloadingResult ovRes,
         const OverloadCandidate* BestOrProblem) override{
     if (!inBestOC)return;
+    auto ovEndTime = std::chrono::steady_clock().now();
     OvInsResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
     node.Fname=L.getFilename();
     node.Entry=getResEntry(ovRes,BestOrProblem);
-    node.Entry.compares=std::move(compares);
-    compares={};
+    node.Entry.passedTime = (ovEndTime-ovStartTime).count();
+    node.Entry.compares=transformCompares();
+    compares.clear();
     if (settings.ShowCompares!=FrontendOptions::SC_Verbose)
       filterForRelevant(node.Entry);
     if (settings.SummarizeBuiltInBinOps)
@@ -402,6 +441,11 @@ public:
         cont.add(node);
       //printResEntry(node.Entry);
     }
+    if (cntPar>maxCnt){
+      maxCnt=cntPar;
+      llvm::errs()<<maxCnt<<"\n";
+    }
+    --cntPar;
     inBestOC=false;
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
@@ -409,6 +453,7 @@ public:
                                       const OverloadCandidate &C2) override {
     if (!inBestOC || !settings.ShowCompares) return;
     inCompare=true;
+    cmpStartTime=std::chrono::steady_clock().now();
   }
   virtual void atCompareOverloadEnd(const Sema &TheSema,
                                     const SourceLocation &Loc,
@@ -416,24 +461,23 @@ public:
                                     const OverloadCandidate &Cand2, bool res,
                                     BetterOverloadCandidateReason reason,
                                     int infoIdx) override {
-    if (!inBestOC || !settings.ShowCompares) return;
-    PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
+    if (!inCompare) return;
+    auto dur=(std::chrono::steady_clock().now()-cmpStartTime).count();
+    /*PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
     if (!L.isValid() ||
         (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         !inSetInterval(L.getLine())){
       inCompare=false;
       return;
-    }
-    OvInsCompareEntry Entry;
-    Entry.C1Better=res;
-    Entry.C1=getCandEntry(Cand1);
-    Entry.C2=getCandEntry(Cand2);
-    if (Entry.C1 == Entry.C2){
+    }*/
+    compares.push_back(cmpInfo{TheSema,Loc,Cand1,Cand2,res,reason,infoIdx,dur});
+    /*
+    if (0&&Entry.C1 == Entry.C2){
       inCompare=false;
       return;
     }                    // EquivalentInternalLinkageDeclaration
     for (const auto& E:compares)//Removeing duplicates
-      if (E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
+      if (0&&E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
     Entry.reason=reason;
     const auto& callKinds=getCallKinds();
     if (reason==clang::betterConversion){
@@ -452,7 +496,7 @@ public:
             Cand1,Cand2,i+isStaticCall,compareResults[i],callKinds));
     }
     for (auto &Other : compares) { // Removeing mirrors
-      if (Other.C1==Entry.C2 && Other.C2==Entry.C1){
+      if (0&&Other.C1==Entry.C2 && Other.C2==Entry.C1){
         if (!Other.C1Better && Entry.C1Better){
           Other=std::move(Entry);//Keep the one where C1 is better
         }else if (Other.C1Better == Entry.C1Better){
@@ -470,10 +514,48 @@ public:
         return;
       }
     }
-    compares.push_back(Entry);
+    */
     inCompare=false;
   }
 private:
+  std::vector<OvInsCompareEntry> transformCompares(){
+    std::vector<OvInsCompareEntry> res;
+    for (size_t i=0; i<compares.size();++i){
+      const auto& cmp=compares[i];
+      for (size_t j=i+1; j<compares.size();++j){
+        if (compares[i].sameCands(compares[j])){
+          //TODO skip?
+        } else if (cmp.mirroredCands(compares[j])){
+          //TODO summarize
+        }
+      }
+      res.emplace_back();
+      auto&Entry=res.back();
+      Entry.duration=cmp.duration;
+      Entry.C1Better=cmp.res;
+      Entry.C1=getCandEntry(cmp.Cand1);
+      Entry.C2=getCandEntry(cmp.Cand2);
+      Entry.reason=cmp.reason;
+      const auto& callKinds=getCallKinds();
+      if (cmp.reason==clang::betterConversion){
+        Entry.deciderConversion = ConversionCompareAsString(cmp.Cand1,cmp.Cand2,cmp.infoIdx,
+          cmp.res?CompareKind::Better:CompareKind::Worse,callKinds) +
+          "\tPlace: "+std::to_string(cmp.infoIdx+1);
+      }else if (cmp.reason==clang::badConversion){
+        Entry.deciderConversion =
+          getFromType(cmp.Cand1.Conversions[cmp.infoIdx]).getAsString()+" -> "+
+          getToType((cmp.res?cmp.Cand2:cmp.Cand1),cmp.infoIdx).getAsString()+" is ill formated";
+      }
+      for (size_t i=0; i!= compareResults.size(); ++i){
+        bool isStaticCall=SetArgMap[Set].ObjectExpr==nullptr&&
+          (cmp.Cand1.IgnoreObjectArgument || cmp.Cand2.IgnoreObjectArgument);
+        Entry.conversionCompares.push_back(ConversionCompareAsString(
+            cmp.Cand1,cmp.Cand2,i+isStaticCall,compareResults[i],callKinds));
+      }
+    }
+    compares.clear();
+    return res;
+  };
   bool checkPlace(SourceLocation loc)const{
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line=L.getLine();
@@ -621,6 +703,8 @@ private:
     auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
     S->Diags.Report(Entry.callSrc.Loc, ID0)<<str::toString(Entry.ovRes)<<types<<Entry.note
               <<Entry.callSrc.range;
+    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Time: %0ns");
+    S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime;
     if (Entry.best)
       printCandEntry(*Entry.best,"Best ");
     for (const auto& x:Entry.problems)
@@ -1293,8 +1377,8 @@ private:
         });
     
     res.isImplicit=getSetArgs().isImplicit;
-      ((Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() &&
-                    Args[0]->getEndLoc()==sr.getEnd()) || (Set->getKind() == Set->CandidateSetKind::CSK_InitByUserDefinedConversion);
+//      ((Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() &&
+//                    Args[0]->getEndLoc()==sr.getEnd()) || (Set->getKind() == Set->CandidateSetKind::CSK_InitByUserDefinedConversion);
     res.callSrc=getSrcFromRange(sr);
     res.ovRes=ovres;
     if (ovres==OR_Success) {
