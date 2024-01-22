@@ -89,13 +89,31 @@ struct OvInsCandEntry{
       Conversions == o.Conversions;
   }
 };
+struct OvInsConvCmpEntry{
+  std::string P1,cmpRes,P2;
+  std::optional<int> place;
+  void print(llvm::raw_string_ostream& os)const{
+    os<<P1<<'\t'<<cmpRes<<'\t'<<P2;
+    if (place)
+      os<<"\tPlace:"<<*place;
+  }
+  std::string printToString()const{
+    std::string res;
+    llvm::raw_string_ostream os(res);
+    print(os);
+    return res;
+  }
+  bool operator==(const OvInsConvCmpEntry& o)const{
+    return P1==o.P1 && P2 ==o.P2 && cmpRes==o.cmpRes;
+  }
+};
 struct OvInsCompareEntry {
   OvInsCandEntry C1,C2;
   BetterOverloadCandidateReason reason;
   bool C1Better;
-  std::optional<std::string> deciderConversion;
-  std::optional<std::string> opposerConversion;
-  std::vector<std::string> conversionCompares;
+  std::optional<OvInsConvCmpEntry> deciderConversion;
+  std::optional<OvInsConvCmpEntry> opposerConversion;
+  std::vector<OvInsConvCmpEntry> conversionCompares;
   long duration;
   bool operator==(const OvInsCompareEntry& o)const{
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
@@ -139,10 +157,19 @@ public:
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(OvInsCandEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsCompareEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsConvEntry);
+LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsConvCmpEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsTemplateSpec);
 namespace llvm{
 namespace yaml{
 
+template <> struct MappingTraits<OvInsConvCmpEntry>{
+  static void mapping(IO& io, OvInsConvCmpEntry& fields){
+    io.mapRequired("Conv1",fields.P1);
+    io.mapRequired("CmpRes",fields.cmpRes);
+    io.mapRequired("Conv2",fields.P2);
+    io.mapOptional("Place", *fields.place);
+  }
+};
 template <> struct MappingTraits<OvInsConvEntry>{
   static void mapping(IO& io, OvInsConvEntry& fields){
     io.mapRequired("kind",fields.kind);
@@ -301,19 +328,19 @@ void displayOvInsResEntry(llvm::raw_ostream& Out,OvInsResEntry& Entry){
 }
 class DefaultOverloadInstCallback:public OverloadCallback{
   struct cmpInfo{
-    const Sema &TheSema;
-    const SourceLocation Loc;
-    const OverloadCandidate &Cand1;
-    const OverloadCandidate &Cand2; 
-    bool res;
+    const Sema *TheSema;
+    SourceLocation Loc;
+    const OverloadCandidate *Cand1;
+    const OverloadCandidate *Cand2; 
+    bool C1Better;
     BetterOverloadCandidateReason reason;
     int infoIdx;
     long duration;
     bool sameCands(const cmpInfo&o)const{
-      return &Cand1==&o.Cand1 && &Cand2==&o.Cand2;
+      return Cand1==o.Cand1 && Cand2==o.Cand2;
     }
     bool mirroredCands(const cmpInfo&o)const{
-      return &Cand2==&o.Cand1 && &Cand1==&o.Cand2;
+      return Cand2==o.Cand1 && Cand1==o.Cand2;
     }
   };
   using CompareKind = clang::ImplicitConversionSequence::CompareKind;
@@ -324,7 +351,7 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   const OverloadCandidateSet* Set=nullptr;
   SourceLocation Loc={};
   //std::vector<OvInsCompareEntry> compares;
-  std::vector<cmpInfo> compares;
+  llvm::SmallVector<cmpInfo> compares;
   OvInsResCont cont;
   clang::FrontendOptions::OvInsSettingsType settings;
   std::vector<CompareKind> compareResults;
@@ -463,94 +490,55 @@ public:
                                     int infoIdx) override {
     if (!inCompare) return;
     auto dur=(std::chrono::steady_clock().now()-cmpStartTime).count();
-    /*PresumedLoc L=S->getSourceManager().getPresumedLoc(Loc);
-    if (!L.isValid() ||
-        (L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
-        !inSetInterval(L.getLine())){
-      inCompare=false;
-      return;
-    }*/
-    compares.push_back(cmpInfo{TheSema,Loc,Cand1,Cand2,res,reason,infoIdx,dur});
-    /*
-    if (0&&Entry.C1 == Entry.C2){
-      inCompare=false;
-      return;
-    }                    // EquivalentInternalLinkageDeclaration
-    for (const auto& E:compares)//Removeing duplicates
-      if (0&&E.C1==Entry.C1 && E.C2==Entry.C2){inCompare=false;return;}
-    Entry.reason=reason;
-    const auto& callKinds=getCallKinds();
-    if (reason==clang::betterConversion){
-      Entry.deciderConversion = ConversionCompareAsString(Cand1,Cand2,infoIdx,
-        res?CompareKind::Better:CompareKind::Worse,callKinds) +
-        "\tPlace: "+std::to_string(infoIdx+1);
-    }else if (reason==clang::badConversion){
-      Entry.deciderConversion =
-        getFromType(Cand1.Conversions[infoIdx]).getAsString()+" -> "+
-        getToType((res?Cand2:Cand1),infoIdx).getAsString()+" is ill formated";
-    }
-    for (size_t i=0; i!= compareResults.size(); ++i){
-      bool isStaticCall=SetArgMap[Set].ObjectExpr==nullptr&&
-        (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
-      Entry.conversionCompares.push_back(ConversionCompareAsString(
-            Cand1,Cand2,i+isStaticCall,compareResults[i],callKinds));
-    }
-    for (auto &Other : compares) { // Removeing mirrors
-      if (0&&Other.C1==Entry.C2 && Other.C2==Entry.C1){
-        if (!Other.C1Better && Entry.C1Better){
-          Other=std::move(Entry);//Keep the one where C1 is better
-        }else if (Other.C1Better == Entry.C1Better){
-          assert(Other.reason==Entry.reason && "reasons must be the same");
-          assert(!Entry.C1Better && "Both can't be better then the other");
-          if (Entry.reason==badConversion){
-            Other.opposerConversion=flipAroundLess(*Entry.deciderConversion);
-          } else if (Entry.reason==betterConversion){
-            Other.opposerConversion=flipAroundLess(*Entry.deciderConversion);
-          } else {
-            assert(Entry.reason==inconclusive && "Unexpected reason of ambiguity");
-          }
-        }
-        inCompare=false;
-        return;
-      }
-    }
-    */
+    compares.push_back(cmpInfo{&TheSema,Loc,&Cand1,&Cand2,res,reason,infoIdx,dur});
     inCompare=false;
   }
 private:
   std::vector<OvInsCompareEntry> transformCompares(){
     std::vector<OvInsCompareEntry> res;
+    std::vector<bool> shouldSkip(compares.size());
     for (size_t i=0; i<compares.size();++i){
-      const auto& cmp=compares[i];
+      if (shouldSkip[i])continue;
+      auto& cmp=compares[i];
+      res.emplace_back();
+      const auto& callKinds=getCallKinds();
+      auto&Entry=res.back();
       for (size_t j=i+1; j<compares.size();++j){
-        if (compares[i].sameCands(compares[j])){
-          //TODO skip?
+        if (cmp.sameCands(compares[j])){
+          shouldSkip[j]=true;
+          cmp.duration+=compares[j].duration;
         } else if (cmp.mirroredCands(compares[j])){
-          //TODO summarize
+          shouldSkip[j]=true;
+          if (!cmp.C1Better && compares[j].C1Better)
+            cmp=compares[j];
+          if (!cmp.C1Better && !compares[j].C1Better)
+            if (cmp.reason==badConversion || cmp.reason==betterConversion)
+              Entry.opposerConversion = ConversionCompare(*cmp.Cand1,*cmp.Cand2,
+                  compares[j].infoIdx,CompareKind::Better,callKinds) ;
+          cmp.duration+=compares[j].duration;
         }
       }
-      res.emplace_back();
-      auto&Entry=res.back();
       Entry.duration=cmp.duration;
-      Entry.C1Better=cmp.res;
-      Entry.C1=getCandEntry(cmp.Cand1);
-      Entry.C2=getCandEntry(cmp.Cand2);
+      Entry.C1Better=cmp.C1Better;
+      Entry.C1=getCandEntry(*cmp.Cand1);
+      Entry.C2=getCandEntry(*cmp.Cand2);
       Entry.reason=cmp.reason;
-      const auto& callKinds=getCallKinds();
       if (cmp.reason==clang::betterConversion){
-        Entry.deciderConversion = ConversionCompareAsString(cmp.Cand1,cmp.Cand2,cmp.infoIdx,
-          cmp.res?CompareKind::Better:CompareKind::Worse,callKinds) +
-          "\tPlace: "+std::to_string(cmp.infoIdx+1);
+        Entry.deciderConversion = ConversionCompare(*cmp.Cand1,*cmp.Cand2,cmp.infoIdx,
+          cmp.C1Better?CompareKind::Better:CompareKind::Worse,callKinds) ;
       }else if (cmp.reason==clang::badConversion){
-        Entry.deciderConversion =
-          getFromType(cmp.Cand1.Conversions[cmp.infoIdx]).getAsString()+" -> "+
-          getToType((cmp.res?cmp.Cand2:cmp.Cand1),cmp.infoIdx).getAsString()+" is ill formated";
+        Entry.deciderConversion = ConversionCompare(*cmp.Cand1,*cmp.Cand2,cmp.infoIdx,
+          cmp.C1Better?CompareKind::Better:CompareKind::Worse,callKinds) ;
+        //Entry.deciderConversion =
+        //  getFromType(cmp.Cand1.Conversions[cmp.infoIdx]).getAsString()+" -> "+
+        //  getToType((cmp.res?cmp.Cand2:cmp.Cand1),cmp.infoIdx).getAsString()+" is ill formated";
       }
       for (size_t i=0; i!= compareResults.size(); ++i){
         bool isStaticCall=SetArgMap[Set].ObjectExpr==nullptr&&
-          (cmp.Cand1.IgnoreObjectArgument || cmp.Cand2.IgnoreObjectArgument);
-        Entry.conversionCompares.push_back(ConversionCompareAsString(
-            cmp.Cand1,cmp.Cand2,i+isStaticCall,compareResults[i],callKinds));
+          (cmp.Cand1->IgnoreObjectArgument || cmp.Cand2->IgnoreObjectArgument);
+        Entry.conversionCompares.push_back(ConversionCompare(
+            *cmp.Cand1,*cmp.Cand2,i+isStaticCall,compareResults[i],callKinds));
+        Entry.conversionCompares.back().place={};
       }
     }
     compares.clear();
@@ -595,20 +583,15 @@ private:
     size_t i=0,j=0;
     while (i!=FunName.size() && j!=candName.size()){
       if (FunName[i]==candName[j]) {++i;++j;}
-      else if (candName[j]==' ' && FunName[i]=='~') {++i; ++j;}
+      else if (FunName[i]=='~' && candName[j]==' ') {++i; ++j;}
       else if (candName[j]==' ') ++j;//for operator T
       else if (FunName[i]=='\'' && candName[j]==',') {++i;++j;}//for operator,
-      else if (FunName.size()==j+5&& FunName.substr(j)=="Comma"  && candName[j]==',') {++i;j+=5;}//for operator,
+      else if (FunName.size()==i+5 && FunName.substr(i)=="Comma"  && candName[j]==',') {
+        i+=5;++j;
+      }//for operator,
       else return false;
     }
     return i==FunName.size() && j==candName.size();
-  }
-  std::string flipAroundLess(const std::string& s)const{
-    auto lessPos=s.find("\t<\t");
-    auto placePos=s.find("\tPlace:");
-    return s.substr(lessPos+3,placePos-(lessPos+3))+
-            "\t>\t"+s.substr(0,lessPos)+
-            s.substr(placePos);
   }
   SourceRange makeSR(const std::vector<SourceLocation>& begs,
                      const std::vector<SourceLocation>& ends)const{
@@ -640,6 +623,17 @@ private:
       S->Diags.Report(Entry.src.range.getBegin(),ID1uninited)<<Entry.kind
             <<Entry.src.range;
   }
+  template<class T,class Tr>
+  std::string concat(const Tr& transform,const T& in, const std::string& sep,char begin='[',char end=']')const{
+    std::string res;
+    if (in.empty())return res;
+    llvm::raw_string_ostream os(res);
+    os<<begin;
+    for (size_t i=0; i<in.size()-1;++i)
+      os<<transform(in[i])<<sep;
+    os<<transform(in.back())<<end;
+    return res;
+  }
   template<class T>
   std::string concat(const T& in, const std::string& sep,char begin='[',char end=']')const{
     std::string res;
@@ -653,13 +647,13 @@ private:
   }
   void printCompareEntry(const OvInsCompareEntry& Entry,SourceLocation loc) const{
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note,
-          "Compearing candidates resulted in %0 (reason: %1) %2 %3%4");
+          "Compearing candidates resulted in %0 (reason: %1) %2 %3%4%5");
     S->Diags.Report(loc,ID1)<<(Entry.C1Better?
           "The first is better":"The first is not better")
           <<str::toString(Entry.reason)<<(Entry.conversionCompares.empty()?
-            "":"\n\tConversions:"+concat(Entry.conversionCompares,"\n\t"))
-          <<(Entry.deciderConversion?"\n\tDecider: "+*Entry.deciderConversion:"")
-          <<(Entry.opposerConversion?"\n\tBut: "+*Entry.opposerConversion:"");
+            "":"\n\tConversions:"+concat( [](const OvInsConvCmpEntry& a){return a.printToString();}, Entry.conversionCompares,"\n\t"))
+          <<(Entry.deciderConversion?"\n\tDecider: "+Entry.deciderConversion->printToString():"")
+          <<(Entry.opposerConversion?"\n\tBut: "+Entry.opposerConversion->printToString():"")<<(Entry.duration?"\n\tTime:"+std::to_string(Entry.duration)+"ns":"");
     printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better ");
     printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse ");
   }
@@ -699,12 +693,14 @@ private:
     }
   }
   void printResEntry(const OvInsResEntry& Entry)const{
+    long timeDiff=Entry.passedTime;
+    for (const auto& cmp:Entry.compares) timeDiff-=cmp.duration;
     std::string types=concat(Entry.callTypes,", ");
     auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
     S->Diags.Report(Entry.callSrc.Loc, ID0)<<str::toString(Entry.ovRes)<<types<<Entry.note
               <<Entry.callSrc.range;
-    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Time: %0ns");
-    S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime;
+    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Time: %0ns __%1ns");
+    S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime<<timeDiff;
     if (Entry.best)
       printCandEntry(*Entry.best,"Best ");
     for (const auto& x:Entry.problems)
@@ -718,6 +714,7 @@ private:
     for (const auto& x:Entry.compares)
       printCompareEntry(x,Entry.callSrc.Loc);
     //Entry.note;;
+    S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime<<timeDiff;
   }
   void printHumanReadable() const {
     for (const auto& x:cont)
@@ -839,46 +836,42 @@ private:
         c->first+" and "+c->second+" you can list them with \"ShowBuiltInBinOps\"";
     }
   }
-  std::string ConversionCompareAsString(const OverloadCandidate& Cand1,
-      const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,
-      const std::vector<ExprValueKind>& vkarr)const{
-    bool isStaticCall=getSetArgs().ObjectExpr==nullptr&&
-        (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
-    ExprValueKind vk=idx<isStaticCall+(int)vkarr.size()?(idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue):VK_LValue;
-    const static char compareSigns[]{'>','=','<'};
+  std::string getConv(const OverloadCandidate& Cand,int idx,ExprValueKind vk)const{
     std::string res;
     llvm::raw_string_ostream os(res);
-    if (!Cand1.Conversions[idx].isInitialized())
+    if (!Cand.Conversions[idx].isInitialized())
       os<<"Uninited";
-    else if (Cand1.Conversions[idx].isEllipsis())
+    else if (Cand.Conversions[idx].isEllipsis())
       os<<"Ellipsis";
-    else if (Cand1.Conversions[idx].isStaticObjectArgument())
+    else if (Cand.Conversions[idx].isStaticObjectArgument())
       os<<"StaticObjectArgument";
     else{
-      os<< '(' << getFromType(Cand1.Conversions[idx]).getCanonicalType()
-        .getAsString() << Kinds[vk] << " -> " << getToType(Cand1, idx)
+      if (Cand.Conversions[idx].isBad())
+        os<<"Bad conv";
+      if (Cand.Conversions[idx].isAmbiguous())
+        os<<"Ambigius";
+      os<< '(' << getFromType(Cand.Conversions[idx]).getCanonicalType()
+        .getAsString() << Kinds[vk] << " -> " << getToType(Cand, idx)
         .getCanonicalType().getAsString();
-      std::string temp=getTemplatedParamForConversion(Cand1, idx);
+      std::string temp=getTemplatedParamForConversion(Cand, idx);
       if (temp!="")
         os<<" = "<<temp;
       os<<')';
     }
-    os<< "\t" << compareSigns[cmpRes + 1] << '\t';
-    if (!Cand2.Conversions[idx].isInitialized())
-      os<<"Uninited";
-    else if (Cand2.Conversions[idx].isEllipsis())
-      os<<"Ellipsis";
-    else if (Cand2.Conversions[idx].isStaticObjectArgument())
-      os<<"StaticObjectArgument";
-    else{
-      os<<'(' <<
-        getFromType(Cand2.Conversions[idx]).getCanonicalType().getAsString() <<
-        Kinds[vk] << " -> " << getToType(Cand2, idx).getCanonicalType().getAsString();
-      std::string temp=getTemplatedParamForConversion(Cand2, idx);
-      if (temp!="")
-        os<<" = "<<temp;
-      os<<')';
-    }
+    return res;
+  }
+  OvInsConvCmpEntry ConversionCompare(const OverloadCandidate& Cand1,
+          const OverloadCandidate& Cand2,int idx,CompareKind cmpRes,
+          const std::vector<ExprValueKind>& vkarr)const{
+    bool isStaticCall=getSetArgs().ObjectExpr==nullptr&&
+        (Cand1.IgnoreObjectArgument || Cand2.IgnoreObjectArgument);
+    ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
+    const static char compareSigns[]{'>','=','<'};
+    OvInsConvCmpEntry res;
+    res.P1=getConv(Cand1,idx,vk);
+    res.cmpRes=compareSigns[cmpRes + 1];
+    res.P2=getConv(Cand2,idx,vk);
+    res.place=idx+1;
     return res;
   }
   std::vector<OvInsCandEntry> getRelevantCands(OvInsResEntry& Entry)const{
