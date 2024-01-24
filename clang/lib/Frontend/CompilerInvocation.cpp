@@ -2557,6 +2557,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
         <<(Opts.OvInsSettings.ShowBuiltInNonViable?"Show":"Hide")<<"BuiltInNonViable,"
         <<(Opts.OvInsSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
         <<(Opts.OvInsSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
+        <<(Opts.OvInsSettings.measureTime?"Show":"Hide")<<"Time,"
         <<OptPrefixes[Opts.OvInsSettings.ShowCompares]<<"Compares,"
         <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
         <<(Opts.OvInsSettings.PrintYAML?",PrintYAML":"")
@@ -2781,6 +2782,10 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Hide;
         } else if (s=="VerboseCompares"){
           Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Verbose;
+        } else if (s=="ShowTime"){
+          Opts.OvInsSettings.measureTime=true;
+        } else if (s=="HideTime"){
+          Opts.OvInsSettings.measureTime=false;
         } else if (s=="SummarizeBuiltInBinOps"){
           Opts.OvInsSettings.SummarizeBuiltInBinOps=true;
         } else if (s=="ShowBuiltInBinOps"){

@@ -114,7 +114,7 @@ struct OvInsCompareEntry {
   std::optional<OvInsConvCmpEntry> deciderConversion;
   std::optional<OvInsConvCmpEntry> opposerConversion;
   std::vector<OvInsConvCmpEntry> conversionCompares;
-  long duration;
+  long passedTime;
   bool operator==(const OvInsCompareEntry& o)const{
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
       C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
@@ -167,7 +167,7 @@ template <> struct MappingTraits<OvInsConvCmpEntry>{
     io.mapRequired("Conv1",fields.P1);
     io.mapRequired("CmpRes",fields.cmpRes);
     io.mapRequired("Conv2",fields.P2);
-    io.mapOptional("Place", *fields.place);
+    io.mapOptional("Place", fields.place);
   }
 };
 template <> struct MappingTraits<OvInsConvEntry>{
@@ -221,7 +221,7 @@ template <> struct MappingTraits<OvInsCompareEntry>{
     io.mapOptional("Conversions", fields.conversionCompares);
     io.mapOptional("Decider", fields.deciderConversion);
     io.mapOptional("Decider2", fields.opposerConversion);
-    io.mapRequired("nanoseconds",fields.duration);
+    io.mapRequired("nanoseconds",fields.passedTime);
   }
 };
 template <> struct MappingTraits<OvInsResEntry>{
@@ -444,13 +444,16 @@ public:
 
     using Seconds = std::chrono::duration<double, std::ratio<1>>;
     double startTime = Seconds(now.time_since_epoch()).count();*/
-    ovStartTime =std::chrono::steady_clock().now();
+    if (settings.measureTime)
+      ovStartTime =std::chrono::steady_clock().now();
   }
   virtual void atOverloadEnd(const Sema&s,const SourceLocation& loc,
         const OverloadCandidateSet& set, OverloadingResult ovRes,
         const OverloadCandidate* BestOrProblem) override{
     if (!inBestOC)return;
-    auto ovEndTime = std::chrono::steady_clock().now();
+    decltype(ovStartTime) ovEndTime;
+    if (settings.measureTime)
+      ovEndTime = std::chrono::steady_clock().now();
     OvInsResNode node;
     PresumedLoc L=S->getSourceManager().getPresumedLoc(loc);
     node.line=L.getLine();
@@ -480,7 +483,8 @@ public:
                                       const OverloadCandidate &C2) override {
     if (!inBestOC || !settings.ShowCompares) return;
     inCompare=true;
-    cmpStartTime=std::chrono::steady_clock().now();
+    if (settings.measureTime)
+      cmpStartTime=std::chrono::steady_clock().now();
   }
   virtual void atCompareOverloadEnd(const Sema &TheSema,
                                     const SourceLocation &Loc,
@@ -489,8 +493,10 @@ public:
                                     BetterOverloadCandidateReason reason,
                                     int infoIdx) override {
     if (!inCompare) return;
-    auto dur=(std::chrono::steady_clock().now()-cmpStartTime).count();
-    compares.push_back(cmpInfo{&TheSema,Loc,&Cand1,&Cand2,res,reason,infoIdx,dur});
+    long time=0;
+    if (settings.measureTime)
+      time=(std::chrono::steady_clock().now()-cmpStartTime).count();
+    compares.push_back(cmpInfo{&TheSema,Loc,&Cand1,&Cand2,res,reason,infoIdx,time});
     inCompare=false;
   }
 private:
@@ -518,7 +524,7 @@ private:
           cmp.duration+=compares[j].duration;
         }
       }
-      Entry.duration=cmp.duration;
+      Entry.passedTime=cmp.duration;
       Entry.C1Better=cmp.C1Better;
       Entry.C1=getCandEntry(*cmp.Cand1);
       Entry.C2=getCandEntry(*cmp.Cand2);
@@ -653,7 +659,7 @@ private:
           <<str::toString(Entry.reason)<<(Entry.conversionCompares.empty()?
             "":"\n\tConversions:"+concat( [](const OvInsConvCmpEntry& a){return a.printToString();}, Entry.conversionCompares,"\n\t"))
           <<(Entry.deciderConversion?"\n\tDecider: "+Entry.deciderConversion->printToString():"")
-          <<(Entry.opposerConversion?"\n\tBut: "+Entry.opposerConversion->printToString():"")<<(Entry.duration?"\n\tTime:"+std::to_string(Entry.duration)+"ns":"");
+          <<(Entry.opposerConversion?"\n\tBut: "+Entry.opposerConversion->printToString():"")<<(Entry.passedTime?"\n\tTime:"+std::to_string(Entry.passedTime)+"ns":"");
     printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better ");
     printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse ");
   }
@@ -694,13 +700,13 @@ private:
   }
   void printResEntry(const OvInsResEntry& Entry)const{
     long timeDiff=Entry.passedTime;
-    for (const auto& cmp:Entry.compares) timeDiff-=cmp.duration;
+    for (const auto& cmp:Entry.compares) timeDiff-=cmp.passedTime;
     std::string types=concat(Entry.callTypes,", ");
     auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
     S->Diags.Report(Entry.callSrc.Loc, ID0)<<str::toString(Entry.ovRes)<<types<<Entry.note
               <<Entry.callSrc.range;
-    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Time: %0ns __%1ns");
-    S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime<<timeDiff;
+    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Time: %0ns Not in compare: %1ns");
+    //S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime<<timeDiff;
     if (Entry.best)
       printCandEntry(*Entry.best,"Best ");
     for (const auto& x:Entry.problems)

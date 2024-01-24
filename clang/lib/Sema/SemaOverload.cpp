@@ -10381,6 +10381,9 @@ bool Sema::isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
       VA->isExternallyVisible() || VB->isExternallyVisible())
     return false;
 
+  llvm::errs()<<"PASSED";
+  VA->dump();
+  VB->dump();
   // Check that the declarations appear to be equivalent.
   //
   // FIXME: Checking the type isn't really enough to resolve the ambiguity.
@@ -10524,12 +10527,11 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
     for (auto *Cand : Candidates) {
       if (Cand->Viable && !Cand->Best &&
           !isBetterOverloadCandidate(S, *Curr, *Cand, Loc, Kind)) {
-        PendingBest.push_back(Cand);//move into the else
+        PendingBest.push_back(Cand);
         Cand->Best = true;
 
         if (S.isEquivalentInternalLinkageDeclaration(Cand->Function,
                                                      Curr->Function)){
-          Best = Cand;
           EquivalentCands.push_back(Cand->Function);
 	      }else{
           Best = end();

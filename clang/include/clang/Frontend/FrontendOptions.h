@@ -538,6 +538,7 @@ public:
     unsigned SummarizeBuiltInBinOps:1;
     unsigned Help:1;
     unsigned PrintYAML:1;
+    unsigned measureTime:1;
   }OvInsSettings;
 
 
@@ -554,7 +555,7 @@ public:
         IncludeTimestamps(true), UseTemporary(true),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         TimeTraceGranularity(500),
-        OvInsSettings({{},{},true,false,SC_Normal,false,false,SC_Normal,false,true,true,false,false}) {}
+        OvInsSettings({{},{},true,false,SC_Normal,false,false,SC_Normal,false,true,true,false,false,false}) {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file
   /// extension. For example, "c" would return Language::C.
