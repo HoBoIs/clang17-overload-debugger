@@ -47,6 +47,7 @@ struct OvInsSource{
   SourceLocation Loc;
   std::string source;
   std::string sourceLoc;
+  std::pair<std::string,std::string> rangeBegEnd;
   bool operator==(const OvInsSource& o)const{
     return range==o.range && source==o.source && Loc==o.Loc && sourceLoc==o.sourceLoc;
   };
@@ -54,17 +55,14 @@ struct OvInsSource{
 struct OvInsConvEntry{
   std::string convPath,convInfo;
   std::string kind;
-  OvInsSource src;
+  OvInsSource src;//Add to yaml?
   bool operator==(const OvInsConvEntry& o) const{
     return convPath==o.convPath && convInfo == o.convInfo && kind==o.kind;
   }
 };
 struct OvInsTemplateSpec{
-  //std::string declLocation;
-  //std::string source;
   OvInsSource src;
   bool isExact;
-  std::vector<std::string> params;
 };
 struct OvInsCandEntry{
   //std::string declLocation;
@@ -177,10 +175,17 @@ template <> struct MappingTraits<OvInsConvEntry>{
     io.mapOptional("convInfo",fields.convInfo,"");
   }
 };
+template <> struct MappingTraits<OvInsSource>{
+  static void mapping(IO& io, OvInsSource& fields){
+    io.mapOptional("Begin",fields.rangeBegEnd.first,"");
+    io.mapOptional("End",fields.rangeBegEnd.second,"");
+    io.mapOptional("Code",fields.source,"");
+    io.mapOptional("Location",fields.sourceLoc,fields.rangeBegEnd.first);
+  }
+};
 template <> struct MappingTraits<OvInsTemplateSpec>{
   static void mapping(IO& io, OvInsTemplateSpec& fields){
-    io.mapRequired("declLocation",fields.src.sourceLoc);
-    io.mapRequired("source",fields.src.source);
+    io.mapRequired("decl",fields.src);
     io.mapRequired("IsExact",fields.isExact);
   }
 };
@@ -190,10 +195,9 @@ template <> struct MappingTraits<OvInsCandEntry>{
     io.mapOptional("RewriteInfo",fields.rewriteKind,CRK_None);
     io.mapOptional("TemplateParams",fields.templateParams);
     io.mapRequired("ParamTypes",fields.paramTypes);
-    io.mapRequired("declLocation",fields.src.sourceLoc);
+    io.mapRequired("declaration",fields.src);
     io.mapOptional("usingLocation",fields.usingLocation,"");
     io.mapOptional("isSurrogate",fields.isSurrogate,false);
-    io.mapOptional("source", fields.src.source,"");
     //io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
     io.mapOptional("templateSpecs (overloading is decided before specialisation)", fields.templateSpecs);
     io.mapOptional("Conversions", fields.Conversions);
@@ -226,8 +230,7 @@ template <> struct MappingTraits<OvInsCompareEntry>{
 };
 template <> struct MappingTraits<OvInsResEntry>{
   static void mapping(IO& io, OvInsResEntry& fields){
-    io.mapRequired("callLocation",fields.callSrc.sourceLoc);
-    io.mapRequired("callSignature",fields.callSrc.source);
+    io.mapRequired("the call",fields.callSrc);
     io.mapRequired("callTypes",fields.callTypes);
     io.mapRequired("overloading result",fields.ovRes);
     io.mapRequired("viable candidates",fields.viableCandidates);
@@ -355,14 +358,13 @@ class DefaultOverloadInstCallback:public OverloadCallback{
   OvInsResCont cont;
   clang::FrontendOptions::OvInsSettingsType settings;
   std::vector<CompareKind> compareResults;
-  int cntPar=0,maxCnt=1;
   struct SetArgs{
     const OverloadCandidateSet* Set;
-    llvm::SmallVector<Expr*,0> inArgs={};
+    llvm::SmallVector<Expr*,4> inArgs={};
     const Expr* ObjectExpr=nullptr;
     SourceLocation EndLoc={};
     SourceLocation Loc={};
-    bool valid=0;
+    bool valid=false;
     bool isImplicit=false;
   };
   std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
@@ -435,7 +437,6 @@ public:
     //  return;
     compares.clear();
     inBestOC = true;
-    ++cntPar;
     /*llvm::sys::TimePoint<> now;
     std::chrono::nanoseconds user, sys;
     llvm::sys::Process::GetTimeUsage(now, user, sys);
@@ -451,7 +452,7 @@ public:
         const OverloadCandidateSet& set, OverloadingResult ovRes,
         const OverloadCandidate* BestOrProblem) override{
     if (!inBestOC)return;
-    decltype(ovStartTime) ovEndTime;
+    std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)
       ovEndTime = std::chrono::steady_clock().now();
     OvInsResNode node;
@@ -466,16 +467,10 @@ public:
       filterForRelevant(node.Entry);
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);
-    if (!node.Entry.isImplicit || settings.ShowImplicitConversions){
+    if (!node.Entry.isImplicit || settings.ShowImplicitConversions)
       if (nameOk())
         cont.add(node);
-      //printResEntry(node.Entry);
-    }
-    if (cntPar>maxCnt){
-      maxCnt=cntPar;
-      llvm::errs()<<maxCnt<<"\n";
-    }
-    --cntPar;
+    
     inBestOC=false;
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
@@ -507,7 +502,7 @@ private:
       if (shouldSkip[i])continue;
       auto& cmp=compares[i];
       res.emplace_back();
-      const auto& callKinds=getCallKinds();
+      auto callKinds=getCallKinds();
       auto&Entry=res.back();
       for (size_t j=i+1; j<compares.size();++j){
         if (cmp.sameCands(compares[j])){
@@ -629,8 +624,9 @@ private:
       S->Diags.Report(Entry.src.range.getBegin(),ID1uninited)<<Entry.kind
             <<Entry.src.range;
   }
-  template<class T,class Tr>
-  std::string concat(const Tr& transform,const T& in, const std::string& sep,char begin='[',char end=']')const{
+  template<class T,class Tr=const std::string&(*)(const std::string&)>
+  std::string concat(const T& in, const std::string& sep,char begin='[',char end=']',
+              Tr transform=[](const std::string& a)->const std::string&{return a;})const{
     std::string res;
     if (in.empty())return res;
     llvm::raw_string_ostream os(res);
@@ -640,26 +636,21 @@ private:
     os<<transform(in.back())<<end;
     return res;
   }
-  template<class T>
-  std::string concat(const T& in, const std::string& sep,char begin='[',char end=']')const{
-    std::string res;
-    if (in.empty())return res;
-    llvm::raw_string_ostream os(res);
-    os<<begin;
-    for (size_t i=0; i<in.size()-1;++i)
-      os<<in[i]<<sep;
-    os<<in.back()<<end;
-    return res;
-  }
   void printCompareEntry(const OvInsCompareEntry& Entry,SourceLocation loc) const{
     unsigned ID1=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note,
           "Compearing candidates resulted in %0 (reason: %1) %2 %3%4%5");
     S->Diags.Report(loc,ID1)<<(Entry.C1Better?
           "The first is better":"The first is not better")
-          <<str::toString(Entry.reason)<<(Entry.conversionCompares.empty()?
-            "":"\n\tConversions:"+concat( [](const OvInsConvCmpEntry& a){return a.printToString();}, Entry.conversionCompares,"\n\t"))
-          <<(Entry.deciderConversion?"\n\tDecider: "+Entry.deciderConversion->printToString():"")
-          <<(Entry.opposerConversion?"\n\tBut: "+Entry.opposerConversion->printToString():"")<<(Entry.passedTime?"\n\tTime:"+std::to_string(Entry.passedTime)+"ns":"");
+          <<str::toString(Entry.reason)
+          <<(Entry.conversionCompares.empty()?""
+            :"\n\tConversions:"+concat(
+                    Entry.conversionCompares,"\n\t",'[',']',
+                    [](const OvInsConvCmpEntry& a){return a.printToString();}))
+          <<(Entry.deciderConversion?"\n\tDecider: "
+              +Entry.deciderConversion->printToString():"")
+          <<(Entry.opposerConversion?"\n\tBut: "
+              +Entry.opposerConversion->printToString():"")
+          <<(Entry.passedTime?"\n\tTime:"+std::to_string(Entry.passedTime)+"ns":"");
     printCandEntry(Entry.C1,Entry.C1Better?"Better ":"Not Better ");
     printCandEntry(Entry.C2,Entry.C1Better?"Worse ":"Not Worse ");
   }
@@ -681,7 +672,8 @@ private:
       for (const auto& x:Entry.Conversions)
         printConvEntry(x);
     else if (!Entry.Conversions.empty()){
-      unsigned ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Conversions: %0");
+      unsigned ID0=S->Diags.getDiagnosticIDs()
+                  ->getCustomDiagID(DiagnosticIDs::Note, "Conversions: %0");
       std::string message;
       llvm::raw_string_ostream os(message);
       for (const auto& x:Entry.Conversions){
@@ -702,15 +694,19 @@ private:
     long timeDiff=Entry.passedTime;
     for (const auto& cmp:Entry.compares) timeDiff-=cmp.passedTime;
     std::string types=concat(Entry.callTypes,", ");
-    auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
-    S->Diags.Report(Entry.callSrc.Loc, ID0)<<str::toString(Entry.ovRes)<<types<<Entry.note
-              <<Entry.callSrc.range;
-    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Time: %0ns Not in compare: %1ns");
+    auto ID0=S->Diags.getDiagnosticIDs()->getCustomDiagID
+              (DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
+    S->Diags.Report(Entry.callSrc.Loc, ID0) << str::toString(Entry.ovRes)
+                                            << types << Entry.note
+                                            << Entry.callSrc.range;
+    auto IDTime=S->Diags.getDiagnosticIDs()->getCustomDiagID
+                  (DiagnosticIDs::Note, "Time: %0ns Not in compare: %1ns");
     //S->Diags.Report(SourceLocation{}, IDTime)<< Entry.passedTime<<timeDiff;
     if (Entry.best)
       printCandEntry(*Entry.best,"Best ");
     for (const auto& x:Entry.problems)
-      printCandEntry(x,Entry.ovRes==clang::OR_Ambiguous?"Ambigius ":"Unresolvable ");//OR unresolvable concept
+      printCandEntry(x,Entry.ovRes==clang::OR_Ambiguous?"Ambigius ":"Unresolvable ");
+        //OR unresolvable concept
     for (const auto& x:Entry.viableCandidates)
       if (!x.isBestOrProblem)
         printCandEntry(x,"Viable ");
@@ -738,7 +734,8 @@ private:
       if (from<=x && x<= to)return true;
     return false;
   }
-  std::optional<std::pair<std::string,std::string>> writeBuiltInsBinOpSumm(const OvInsResEntry& E)const{
+  std::optional<std::pair<std::string,std::string>> 
+          writeBuiltInsBinOpSumm(const OvInsResEntry& E)const{
     std::pair<std::string,std::string> res;
     std::set<std::string> types[3];
     if (Set->getKind()==Set->CandidateSetKind::CSK_Operator){
@@ -779,7 +776,8 @@ private:
       os<<", "<<C.BuiltinParamTypes[2].getAsString();
     os<<")";
   }*/
-  void addBuiltinOpSpelling(llvm::raw_string_ostream& os, const OverloadCandidate& C)const{
+  void addBuiltinOpSpelling(llvm::raw_string_ostream& os, 
+                            const OverloadCandidate& C)const{
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
     const char* cc=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
     if (cc)
@@ -811,7 +809,7 @@ private:
     if( cand.src.sourceLoc=="Built-in" && cand.paramTypes.size()==2 && 
         cand.paramTypes[0]!=cand.paramTypes[1]) {
       std::string_view name(cand.name);
-      //sizeof "Built-in operator "
+      //sizeof "Built-in operator "=18
       name=name.substr(18,2);
       return name!="()" && name!=", " && name!="[]" && name!="++" && name!="--";
     }
@@ -842,7 +840,7 @@ private:
         c->first+" and "+c->second+" you can list them with \"ShowBuiltInBinOps\"";
     }
   }
-  std::string getConv(const OverloadCandidate& Cand,int idx,ExprValueKind vk)const{
+  std::string getConvAsStr(const OverloadCandidate& Cand,int idx,ExprValueKind vk)const{
     std::string res;
     llvm::raw_string_ostream os(res);
     if (!Cand.Conversions[idx].isInitialized())
@@ -874,9 +872,9 @@ private:
     ExprValueKind vk=idx>=isStaticCall?vkarr[idx-isStaticCall]:VK_LValue;
     const static char compareSigns[]{'>','=','<'};
     OvInsConvCmpEntry res;
-    res.P1=getConv(Cand1,idx,vk);
+    res.P1=getConvAsStr(Cand1,idx,vk);
     res.cmpRes=compareSigns[cmpRes + 1];
-    res.P2=getConv(Cand2,idx,vk);
+    res.P2=getConvAsStr(Cand2,idx,vk);
     res.place=idx+1;
     return res;
   }
@@ -991,6 +989,7 @@ private:
     OvInsSource res=getSrcFromRange(e->getSourceRange());
     //res.range=e->getSourceRange();
     res.Loc=e->getExprLoc();
+    res.sourceLoc=res.Loc.printToString(S->getSourceManager());
     //res.sourceLoc=res.range.getBegin().printToString(S->getSourceManager());
     //res.source=;
     return res;
@@ -1047,7 +1046,8 @@ private:
         path<<Kinds[fromKind];
         actual.convInfo=getConversionSeq(conv.Standard);
         if (C.Function && idx!=-1  && !isa<clang::InitListExpr>(setArg.inArgs[idx]))
-          path << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
+          path << " -> " << C.Function->parameters()[idx]
+                ->getType().getCanonicalType().getAsString();
         else
           path << " -> " << conv.Standard.getToType(2).getCanonicalType().getAsString();
         break;
@@ -1060,17 +1060,22 @@ private:
         path << Kinds[fromKind];
         if (conv.UserDefined.Before.First || conv.UserDefined.Before.Second ||
             conv.UserDefined.Before.Third)
-          path << " -> " << conv.UserDefined.Before.getToType(2).getCanonicalType().getAsString();
+          path << " -> " << conv.UserDefined.Before.getToType(2)
+                .getCanonicalType().getAsString();
         actual.convInfo=getConversionSeq(conv.UserDefined);
         if (conv.UserDefined.After.First || conv.UserDefined.After.Second ||
             conv.UserDefined.After.Third)
-          path << " -> " << conv.UserDefined.After.getFromType().getCanonicalType().getAsString();
+          path << " -> " << conv.UserDefined.After.getFromType()
+                .getCanonicalType().getAsString();
         if (C.Function && idx!=-1&& !isa<clang::InitListExpr>(setArg.inArgs[idx]))
-          path << " -> " << C.Function->parameters()[idx]->getType().getCanonicalType().getAsString();
+          path << " -> " << C.Function->parameters()[idx]
+                ->getType().getCanonicalType().getAsString();
         else if (C.IsSurrogate && idx==-1)
-          path << " -> " << conv.UserDefined.ConversionFunction->getReturnType().getCanonicalType().getAsString();
+          path << " -> " << conv.UserDefined.ConversionFunction
+                ->getReturnType().getCanonicalType().getAsString();
         else
-          path << " -> " << conv.UserDefined.After.getToType(2).getCanonicalType().getAsString();
+          path << " -> " << conv.UserDefined.After.getToType(2)
+                .getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
         actual.kind="Ambigious";
@@ -1149,9 +1154,7 @@ private:
         res.name="Surrogate from " + C.Surrogate->getQualifiedNameAsString();
       res.paramTypes=getSurrSignature(C);
       res.isSurrogate=true;
-      res.src.Loc=C.Surrogate->getLocation();
-      llvm::raw_string_ostream declLoc(res.src.sourceLoc);
-      res.src.Loc.print(declLoc,S->SourceMgr);
+      res.src=getSrcFromRange(C.Surrogate->getSourceRange());
       return res;
     }
 
@@ -1173,7 +1176,7 @@ private:
     res.rewriteKind=C.getRewriteKind();
     if (!C.Function && !C.IsSurrogate)
       res.rewriteKind=OverloadCandidateRewriteKind::CRK_None;
-    res.name=/*(C.isReversed()?"Reversed from ":"")+*/C.FoundDecl.getDecl()->getQualifiedNameAsString();
+    res.name=C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function){
       res.paramTypes=getParamTypes(C);
       res.src=getSource(C);
@@ -1195,24 +1198,29 @@ private:
         OvInsTemplateSpec entry;
         entry.isExact=true;
         entry.src=getSrcFromRange({x->getLocation(),x->getTypeSpecEndLoc()});
-        if (x->getTemplateSpecializationArgs() && C.Function->getTemplateSpecializationArgs()){
+        if (x->getTemplateSpecializationArgs() && 
+            C.Function->getTemplateSpecializationArgs()){
           const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
-          const auto genericArgs =  C.Function->getTemplateSpecializationArgs()->asArray();
+          auto genericArgs = C.Function->getTemplateSpecializationArgs()->asArray();
           int midx=std::min(specializedArgs.size(),genericArgs.size());
           entry.isExact= genericArgs.size()==specializedArgs.size();
           for(int i=0; i!=midx;++i)
-            entry.isExact=entry.isExact && specializedArgs[i].structurallyEquals(genericArgs[i]);
+            entry.isExact=entry.isExact && 
+              specializedArgs[i].structurallyEquals(genericArgs[i]);
         }else 
           entry.isExact=false;
         if (entry.isExact && !C.Best && !inCompare){
           static std::set<std::pair<SourceLocation,const FunctionDecl*>> s;
           if (!s.count(std::pair{Loc,x})){
             s.emplace(Loc,x);
-            auto ID=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Warning, "Explicit specialization ignored");
+            auto ID=S->Diags.getDiagnosticIDs()->getCustomDiagID(
+                        DiagnosticIDs::Warning, "Explicit specialization ignored");
             S->Diags.Report(Loc, ID)<<sr;
-            auto ID2=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "The ignored specialization:");
+            auto ID2=S->Diags.getDiagnosticIDs()->getCustomDiagID(
+                        DiagnosticIDs::Note, "The ignored specialization:");
             S->Diags.Report(x->getLocation(), ID2)<<x->getSourceRange();
-            auto ID3=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "General declaration:");
+            auto ID3=S->Diags.getDiagnosticIDs()->getCustomDiagID(
+                        DiagnosticIDs::Note, "General declaration:");
             S->Diags.Report(f->getLocation(), ID3)<<f->getSourceRange();
             //if ()
           }
@@ -1230,8 +1238,11 @@ private:
         r.getEnd(), 1, S->getSourceManager(), S->getLangOpts()));
     CharSourceRange crange=CharSourceRange::getCharRange(r.getBegin(),endloc);
     res.range={r.getBegin(),endloc2};
+    res.rangeBegEnd={r.getBegin().printToString(S->getSourceManager())
+                    ,r.getEnd().printToString(S->getSourceManager())};
     res.source=Lexer::getSourceText(crange, S->getSourceManager(), S->getLangOpts());
-    res.sourceLoc=r.getBegin().printToString(S->getSourceManager());
+    res.Loc=r.getBegin();
+    res.sourceLoc=res.Loc.printToString(S->getSourceManager());
     return res;
   }
 
@@ -1310,7 +1321,8 @@ private:
         for (size_t i=0; i<templateArgs->size();++i){
           res.push_back({});
           llvm::raw_string_ostream os(res.back());
-          os<<ptemplates->getTemplateParameters()->asArray()[i]->getNameAsString()<<" = ";
+          os<<ptemplates->getTemplateParameters()->asArray()[i]
+                ->getNameAsString()<<" = ";
           templateArgs->data()[i].dump(os);
         }
     return res;
