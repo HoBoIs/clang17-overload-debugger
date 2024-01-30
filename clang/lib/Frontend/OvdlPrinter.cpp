@@ -15,7 +15,6 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
-//#include <pstl/glue_execution_defs.h>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -67,10 +66,10 @@ struct OvInsTemplateSpec{
 struct OvInsCandEntry{
   //std::string declLocation;
   //clang::SourceLocation declLoc;
+  std::string name;
   std::string usingLocation;
   clang::SourceLocation usingLoc;
-  std::string name;
-  bool isSurrogate=false;
+  OverloadCandidateRewriteKind rewriteKind;
   std::deque<std::string> paramTypes;
   OvInsSource src;
   std::vector<OvInsTemplateSpec> templateSpecs;
@@ -78,8 +77,8 @@ struct OvInsCandEntry{
   std::optional<std::string> extraFailInfo;
   std::vector<OvInsConvEntry> Conversions;
   std::deque<std::string> templateParams;
+  bool isSurrogate=false;
   bool isBestOrProblem;
-  OverloadCandidateRewriteKind rewriteKind;
   bool operator==(const OvInsCandEntry& o) const{
     return name == o.name && src==o.src &&
       paramTypes == o.paramTypes && src == o.src &&
@@ -107,16 +106,16 @@ struct OvInsConvCmpEntry{
 };
 struct OvInsCompareEntry {
   OvInsCandEntry C1,C2;
-  BetterOverloadCandidateReason reason;
-  bool C1Better;
   std::optional<OvInsConvCmpEntry> deciderConversion;
   std::optional<OvInsConvCmpEntry> opposerConversion;
   std::vector<OvInsConvCmpEntry> conversionCompares;
   long passedTime;
+  BetterOverloadCandidateReason reason;
+  bool C1Better;
   bool operator==(const OvInsCompareEntry& o)const{
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
       C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
-      conversionCompares == o.conversionCompares && 
+      conversionCompares == o.conversionCompares &&
       opposerConversion==o.opposerConversion;
   }
 };
@@ -127,9 +126,9 @@ struct OvInsResEntry{
   std::vector<OvInsCandEntry> problems;
   std::vector<OvInsCompareEntry> compares;
   OvInsSource callSrc;
-  clang::OverloadingResult ovRes;
   std::deque<std::string> callTypes;
   std::string note;
+  clang::OverloadingResult ovRes;
   bool isImplicit=false;
   long passedTime;
 };
@@ -198,8 +197,8 @@ template <> struct MappingTraits<OvInsCandEntry>{
     io.mapRequired("declaration",fields.src);
     io.mapOptional("usingLocation",fields.usingLocation,"");
     io.mapOptional("isSurrogate",fields.isSurrogate,false);
-    //io.mapOptional("templateSpecs (not involved in overloading (overloading is decided before specialisation))", fields.templateSpecs);
-    io.mapOptional("templateSpecs (overloading is decided before specialisation)", fields.templateSpecs);
+    io.mapOptional("templateSpecs", fields.templateSpecs);
+    //io.mapOptional("templateSpecs (overloading is decided before specialisation)", fields.templateSpecs);
     io.mapOptional("Conversions", fields.Conversions);
     io.mapOptional("FailureKind", fields.failKind);
     io.mapOptional("extraFailInfo", fields.extraFailInfo);
@@ -334,7 +333,7 @@ class DefaultOverloadInstCallback:public OverloadCallback{
     const Sema *TheSema;
     SourceLocation Loc;
     const OverloadCandidate *Cand1;
-    const OverloadCandidate *Cand2; 
+    const OverloadCandidate *Cand2;
     bool C1Better;
     BetterOverloadCandidateReason reason;
     int infoIdx;
@@ -470,7 +469,7 @@ public:
     if (!node.Entry.isImplicit || settings.ShowImplicitConversions)
       if (nameOk())
         cont.add(node);
-    
+
     inBestOC=false;
   }
   virtual void atCompareOverloadBegin(const Sema &S, const SourceLocation &Loc,
@@ -503,7 +502,7 @@ private:
       auto& cmp=compares[i];
       res.emplace_back();
       auto callKinds=getCallKinds();
-      auto&Entry=res.back();
+      auto& Entry=res.back();
       for (size_t j=i+1; j<compares.size();++j){
         if (cmp.sameCands(compares[j])){
           shouldSkip[j]=true;
@@ -558,7 +557,7 @@ private:
     bool qual=(settings.CandFunName.find("::")!=std::string::npos);
     if (settings.CandFunName.empty()) return true;
     for (const auto& cand:*Set) {
-      if (cand.Function && ! cand.IsSurrogate && 
+      if (cand.Function && ! cand.IsSurrogate &&
           checkName(settings.CandFunName,
             qual?cand.Function->getQualifiedNameAsString()
                 :cand.Function->getNameAsString()))
@@ -668,6 +667,10 @@ private:
             <<(Entry.failKind?"\n\tFailure reason: "+str::toString(*Entry.failKind):"")
             <<(Entry.extraFailInfo?*Entry.extraFailInfo:"")
             <<Entry.src.range;
+    unsigned IDusingNote=S->Diags.getDiagnosticIDs()->
+            getCustomDiagID(DiagnosticIDs::Note, "using from here");
+    if (Entry.usingLoc!=SourceLocation{})
+      S->Diags.Report(Entry.usingLoc, IDusingNote);
     if (0)//!SUMARIZE convs
       for (const auto& x:Entry.Conversions)
         printConvEntry(x);
@@ -688,6 +691,21 @@ private:
       diag<<message;
       for (const auto& x:Entry.Conversions)
         diag<<x.src.range;
+    }
+    if (Entry.templateSpecs.size()){
+      unsigned IDTempSpecCnt=S->Diags.getDiagnosticIDs()->
+            getCustomDiagID(DiagnosticIDs::Note, "%0 explicit template specialivations found");
+      S->Diags.Report(/*TODO*/SourceLocation{}, IDTempSpecCnt)<<Entry.templateSpecs.size();
+      unsigned IDTempSpecDecl=S->Diags.getDiagnosticIDs()->
+            getCustomDiagID(DiagnosticIDs::Note, "explicit template specialisation");
+      unsigned IDTempSpecDeclExact=S->Diags.getDiagnosticIDs()->
+            getCustomDiagID(DiagnosticIDs::Note, "explicit template specialisation");
+      for (const auto&ts: Entry.templateSpecs){
+        if (ts.isExact)
+          S->Diags.Report(ts.src.Loc,IDTempSpecDeclExact)<<ts.src.range;
+        else
+          S->Diags.Report(ts.src.Loc,IDTempSpecDecl)<<ts.src.range;
+      }
     }
   }
   void printResEntry(const OvInsResEntry& Entry)const{
@@ -734,7 +752,7 @@ private:
       if (from<=x && x<= to)return true;
     return false;
   }
-  std::optional<std::pair<std::string,std::string>> 
+  std::optional<std::pair<std::string,std::string>>
           writeBuiltInsBinOpSumm(const OvInsResEntry& E)const{
     std::pair<std::string,std::string> res;
     std::set<std::string> types[3];
@@ -776,7 +794,7 @@ private:
       os<<", "<<C.BuiltinParamTypes[2].getAsString();
     os<<")";
   }*/
-  void addBuiltinOpSpelling(llvm::raw_string_ostream& os, 
+  void addBuiltinOpSpelling(llvm::raw_string_ostream& os,
                             const OverloadCandidate& C)const{
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
     const char* cc=getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
@@ -806,11 +824,11 @@ private:
     return res;
   }
   bool shouldSumm(const OvInsCandEntry& cand)const{
-    if( cand.src.sourceLoc=="Built-in" && cand.paramTypes.size()==2 && 
+    if( cand.src.sourceLoc=="Built-in" && cand.paramTypes.size()==2 &&
         cand.paramTypes[0]!=cand.paramTypes[1]) {
       std::string_view name(cand.name);
-      //sizeof "Built-in operator "=18
-      name=name.substr(18,2);
+      //sizeof("Built-in operator "\0)=19
+      name=name.substr(sizeof("Built-in operator ")-1,2);
       return name!="()" && name!=", " && name!="[]" && name!="++" && name!="--";
     }
     return false;
@@ -829,7 +847,7 @@ private:
       auto relevants=getRelevantCands(E);
       for (int i=0; i<(int)E.compares.size();++i){
         const auto& comp=E.compares[i];
-        if ((!isIn(relevants,comp.C1) && shouldSumm(comp.C1)) || 
+        if ((!isIn(relevants,comp.C1) && shouldSumm(comp.C1)) ||
             (!isIn(relevants,comp.C2) && shouldSumm(comp.C2))){
           std::swap(E.compares.back(),E.compares[i]);
           E.compares.pop_back();
@@ -845,22 +863,20 @@ private:
     llvm::raw_string_ostream os(res);
     if (!Cand.Conversions[idx].isInitialized())
       os<<"Uninited";
-    else if (Cand.Conversions[idx].isEllipsis())
-      os<<"Ellipsis";
-    else if (Cand.Conversions[idx].isStaticObjectArgument())
-      os<<"StaticObjectArgument";
-    else{
-      if (Cand.Conversions[idx].isBad())
-        os<<"Bad conv";
-      if (Cand.Conversions[idx].isAmbiguous())
-        os<<"Ambigius";
-      os<< '(' << getFromType(Cand.Conversions[idx]).getCanonicalType()
-        .getAsString() << Kinds[vk] << " -> " << getToType(Cand, idx)
-        .getCanonicalType().getAsString();
-      std::string temp=getTemplatedParamForConversion(Cand, idx);
-      if (temp!="")
-        os<<" = "<<temp;
-      os<<')';
+    else {
+      if (!(Cand.Conversions[idx].isStandard() ||
+            Cand.Conversions[idx].isUserDefined()))//?
+        os << str::toString(Cand.Conversions[idx].getKind());
+      if (!(Cand.Conversions[idx].isEllipsis() ||
+            Cand.Conversions[idx].isStaticObjectArgument())){
+        os<< " (" << getFromType(Cand.Conversions[idx]).getCanonicalType()
+          .getAsString() << Kinds[vk] << " -> " << getToType(Cand, idx)
+          .getCanonicalType().getAsString();
+        std::string temp=getTemplatedParamForConversion(Cand, idx);
+        if (temp!="")
+          os<<" = "<<temp;
+        os<<')';
+      }
     }
     return res;
   }
@@ -880,9 +896,8 @@ private:
   }
   std::vector<OvInsCandEntry> getRelevantCands(OvInsResEntry& Entry)const{
     std::vector<OvInsCandEntry> relevants=Entry.problems;
-    if (relevants.empty() && Entry.best){
+    if (relevants.empty() && Entry.best)
       relevants.push_back(*Entry.best);
-    }
     return relevants;
   }
   bool isIn(const std::vector<OvInsCandEntry>& v, OvInsCandEntry c)const{
@@ -906,9 +921,8 @@ private:
     if (C.IsSurrogate){
       //C.FoundDecl.getDecl();
       const NamedDecl* nd=C.FoundDecl.getDecl();
-      while (isa<UsingShadowDecl>(nd)){
+      while (isa<UsingShadowDecl>(nd))
         nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
-      }
       const auto ty=nd->getAsFunction()->getCallResultType();
         //The type of the functionPtr
       const auto* fptr=ty->getAs<PointerType>()->getPointeeType()
@@ -918,7 +932,7 @@ private:
     }
     if (C.Function){
       //Check when deducing this is implemented FIXME
-      bool needObj=isa<CXXMethodDecl>(C.Function) && 
+      bool needObj=isa<CXXMethodDecl>(C.Function) &&
               !isa<CXXConstructorDecl>(C.Function);
       if (!C.Function->getEllipsisLoc().isInvalid())
         return {C.Function->getMinRequiredArguments()+needObj,-1};
@@ -1007,15 +1021,15 @@ private:
     }
     OvInsSource res;
     res.range={setArg.Loc};
-    return res;    
+    return res;
   }
   std::vector<OvInsConvEntry> getConversions(const OverloadCandidate& C)const{
     std::vector<OvInsConvEntry> res(C.Conversions.size());
-    const auto& callKinds=getCallKinds();
+    const auto callKinds=getCallKinds();
     const SetArgs& setArg=getSetArgs();
     bool isStaticCall=setArg.ObjectExpr==nullptr&&C.IgnoreObjectArgument;
     for (size_t i=0; i<C.Conversions.size();++i){
-      const ExprValueKind fromKind=(callKinds.size()>i-isStaticCall)? 
+      const ExprValueKind fromKind=(callKinds.size()>i-isStaticCall)?
             ((i>=isStaticCall)?callKinds[i-isStaticCall]:VK_LValue):VK_LValue;
       const auto& conv=C.Conversions[i];
       OvInsConvEntry& actual=res[i];
@@ -1028,7 +1042,7 @@ private:
         actual.src=getConversionSource(setArg, inArgsIdx);
       }
       if (!conv.isInitialized()){
-        actual.kind="Not initialized";
+        actual.kind="Uninitialized";
         continue;
       }
       int idx=i;
@@ -1039,9 +1053,9 @@ private:
           C.IsSurrogate)
         --idx;
       llvm::raw_string_ostream path(actual.convPath);
+      actual.kind=str::toString(conv.getKind());
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
-        actual.kind="Standard";
         path<<conv.Standard.getFromType().getCanonicalType().getAsString();
         path<<Kinds[fromKind];
         actual.convInfo=getConversionSeq(conv.Standard);
@@ -1052,10 +1066,8 @@ private:
           path << " -> " << conv.Standard.getToType(2).getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
-        actual.kind="StaticObjectConversion";
         break;
       case ImplicitConversionSequence::UserDefinedConversion:
-        actual.kind="UserDefined";
         path << conv.UserDefined.Before.getFromType().getCanonicalType().getAsString();
         path << Kinds[fromKind];
         if (conv.UserDefined.Before.First || conv.UserDefined.Before.Second ||
@@ -1078,19 +1090,17 @@ private:
                 .getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
-        actual.kind="Ambigious";
         path << conv.Ambiguous.getFromType().getCanonicalType().getAsString();
         path << Kinds[fromKind];
         path << " -> " << conv.Ambiguous.getToType().getCanonicalType().getAsString();
         break;
       case ImplicitConversionSequence::EllipsisConversion:
-        actual.kind="Ellipsis";
         break;
       case ImplicitConversionSequence::BadConversion:
-        actual.kind="Bad: "+str::toString(conv.Bad.Kind);
         path << conv.Bad.getFromType().getCanonicalType().getAsString();
         path << Kinds[fromKind];
         path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString();
+        actual.convInfo=str::toString(conv.Bad.Kind);
         break;
       }
       if (C.Function /*&& !C.IsSurrogate*/){
@@ -1198,16 +1208,16 @@ private:
         OvInsTemplateSpec entry;
         entry.isExact=true;
         entry.src=getSrcFromRange({x->getLocation(),x->getTypeSpecEndLoc()});
-        if (x->getTemplateSpecializationArgs() && 
+        if (x->getTemplateSpecializationArgs() &&
             C.Function->getTemplateSpecializationArgs()){
           const auto specializedArgs=x->getTemplateSpecializationArgs()->asArray();
           auto genericArgs = C.Function->getTemplateSpecializationArgs()->asArray();
           int midx=std::min(specializedArgs.size(),genericArgs.size());
           entry.isExact= genericArgs.size()==specializedArgs.size();
           for(int i=0; i!=midx;++i)
-            entry.isExact=entry.isExact && 
+            entry.isExact=entry.isExact &&
               specializedArgs[i].structurallyEquals(genericArgs[i]);
-        }else 
+        }else
           entry.isExact=false;
         if (entry.isExact && !C.Best && !inCompare){
           static std::set<std::pair<SourceLocation,const FunctionDecl*>> s;
@@ -1280,7 +1290,7 @@ private:
       nd=llvm::dyn_cast<UsingShadowDecl>(nd)->getTargetDecl();
     const FunctionDecl* f=nd->getAsFunction();
     if (!f) return {};
-    if (f->isTemplated() ) 
+    if (f->isTemplated() )
       return getTemplateSrc(f);
     return getNonTemplateSrc(f);
     //return f->getSourceRange();
@@ -1336,7 +1346,7 @@ private:
       res.emplace_back(std::tuple{thisType,false});
     if (!C.Function->param_empty())
       for (size_t i=0;i!=C.Function->param_size();++i){
-        const auto& x=C.Function->parameters()[i];
+        const auto* x=C.Function->parameters()[i];
         res.emplace_back(x->getType(),x->hasDefaultArg());
       }
     return res;
@@ -1373,12 +1383,9 @@ private:
     return res;
   }
   SourceRange sr;
-  OvInsResEntry getResEntry(OverloadingResult ovres,
-                           const OverloadCandidate* BestOrProblem) {
-    OvInsResEntry res;
-    ArrayRef<Expr*> Args=getSetArgs().inArgs;
+  SourceRange makeSrFromArgs(ArrayRef<Expr*> Args, SourceLocation Loc){
     //Args can be reversed.
-    sr=makeSR({
+    return makeSR({
           Loc,(Args.size() && Args[0]?Args[0]->getBeginLoc():SourceLocation{}),
           (Args.size() && Args.back()?Args.back()->getBeginLoc():SourceLocation{})
         },{
@@ -1386,55 +1393,56 @@ private:
           (Args.size()&&Args.back()?Args.back()->getEndLoc():SourceLocation{}),
           getSetArgs().EndLoc
         });
-    
+  };
+  std::string getObjTypeStr(const Expr* Oe)const{
+    if (const auto* UOe= llvm::dyn_cast<UnresolvedMemberExpr>(Oe))
+      return UOe->getBaseType().getCanonicalType().getAsString();
+    return Oe->getType().getCanonicalType().getAsString();
+  }
+  std::deque<std::string> getCallTypes(ArrayRef<Expr*> Args)const{
+    std::deque<std::string> res;
+    if (const Expr* Oe=getSetArgs().ObjectExpr)
+      res.push_back("(Obj:" + getObjTypeStr(Oe) + ')');
+    for (const auto& x:Args){
+      if (x==nullptr) res.push_back("NULL");
+      else if (isa<clang::InitListExpr>(x))
+        res.push_back("InitizerList");
+      else
+        res.push_back(x->getType().getCanonicalType().getAsString());
+    }
+
+    const auto callKinds=getCallKinds();
+    for (size_t i=0; i!=callKinds.size();++i)
+      res[i]+=Kinds[callKinds[i]];
+    return res;
+  }
+  OvInsResEntry getResEntry(OverloadingResult ovres,
+                           const OverloadCandidate* BestOrProblem) {
+    OvInsResEntry res;
+    ArrayRef<Expr*> Args=getSetArgs().inArgs;
+    sr=makeSrFromArgs(Args,Loc);
     res.isImplicit=getSetArgs().isImplicit;
-//      ((Args.size()==1)&& Args[0]->getBeginLoc()==sr.getBegin() &&
-//                    Args[0]->getEndLoc()==sr.getEnd()) || (Set->getKind() == Set->CandidateSetKind::CSK_InitByUserDefinedConversion);
     res.callSrc=getSrcFromRange(sr);
+    res.callSrc.Loc=Loc;
     res.ovRes=ovres;
-    if (ovres==OR_Success) {
+    if (ovres==OR_Success)
       res.best=getCandEntry(*BestOrProblem);
-      res.problems={};
-    }else if (ovres==clang::OR_Ambiguous){
-      res.best={};
-      res.problems = {};
-      for (const auto& cand:*Set){
+    else if (ovres==clang::OR_Ambiguous){
+      for (const auto& cand:*Set)
         if (cand.Best)
           res.problems.push_back(getCandEntry(cand));
-      }
-    }else{
-      res.best={};
+    }else
       if (BestOrProblem)
         res.problems={getCandEntry(*BestOrProblem)};
-    }
-    res.callSrc.Loc=Loc;
-    const auto& callKinds=getCallKinds();
-    if (const Expr* Oe=getSetArgs().ObjectExpr) {
-      QualType objType;
-      if (auto* UOe= llvm::dyn_cast<UnresolvedMemberExpr>(Oe))
-        objType=UOe->getBaseType().getCanonicalType();
-      else
-        objType=Oe->getType().getCanonicalType();
-      res.callTypes.push_back("(Obj:" + objType.getAsString() + ')');
-    }
-    for (const auto& x:Args){
-      if (x==nullptr) {res.callTypes.push_back("NULL"); continue;}
-      if (isa<clang::InitListExpr>(x))
-        res.callTypes.push_back("InitizerList");
-      else
-        res.callTypes.push_back(x->getType().getCanonicalType().getAsString());
-    }
-    for (size_t i=0; i!=callKinds.size();++i)
-      res.callTypes[i]+=Kinds[callKinds[i]];
-    for (const auto& cand:*Set){
+    res.callTypes=getCallTypes(Args);
+    for (const auto& cand:*Set)
       if (cand.Viable)
         addCand(res.viableCandidates,getCandEntry(cand));
       else if (settings.ShowNonViableCands){
-        const auto x=getCandEntry(cand);
+        auto x=getCandEntry(cand);
         if (x.src.sourceLoc!="Built-in" || settings.ShowBuiltInNonViable)
-          addCand(res.nonViableCandidates,getCandEntry(cand));
+          addCand(res.nonViableCandidates,std::move(x));
       }
-    }
     return res;
   }
   void addCand(std::vector<OvInsCandEntry>& v,OvInsCandEntry&& cand)const{
