@@ -593,17 +593,16 @@ private:
     }
     return i==FunName.size() && j==candName.size();
   }
-  SourceRange makeSR(const std::vector<SourceLocation>& begs,
+  SourceRange makeSourceRangeFromPossibleEndpoints
+                    (const std::vector<SourceLocation>& begs,
                      const std::vector<SourceLocation>& ends)const{
-    SourceLocation beg={};
-    for (const auto& x:begs){
-      if (x.isValid() && (beg.isInvalid()||x<beg))beg=x;
-    }
-    SourceLocation end={};
-    for (const auto& x:ends){
-      if (x.isValid() && (end.isInvalid() || x>end))end=x;
-    }
-    return {beg,end};
+    SourceRange res;
+    for (const auto& x:begs)
+      if (x.isValid() && (res.getBegin().isInvalid()||x<res.getBegin()))
+        res.setBegin(x);
+    for (const auto& x:ends)
+      if (x.isValid() && (res.getEnd().isInvalid()||x<res.getEnd()))res.setEnd(x);
+    return res;
   }
   void printConvEntry(const OvInsConvEntry& Entry)const {
     unsigned ID1=S->Diags.getDiagnosticIDs()->
@@ -695,17 +694,16 @@ private:
     if (Entry.templateSpecs.size()){
       unsigned IDTempSpecCnt=S->Diags.getDiagnosticIDs()->
             getCustomDiagID(DiagnosticIDs::Note, "%0 explicit template specialivations found");
-      S->Diags.Report(/*TODO*/SourceLocation{}, IDTempSpecCnt)<<Entry.templateSpecs.size();
+      S->Diags.Report(SourceLocation{}, IDTempSpecCnt)<<Entry.templateSpecs.size();
       unsigned IDTempSpecDecl=S->Diags.getDiagnosticIDs()->
             getCustomDiagID(DiagnosticIDs::Note, "explicit template specialisation");
       unsigned IDTempSpecDeclExact=S->Diags.getDiagnosticIDs()->
-            getCustomDiagID(DiagnosticIDs::Note, "explicit template specialisation");
-      for (const auto&ts: Entry.templateSpecs){
+            getCustomDiagID(DiagnosticIDs::Note, "exactly matched explicit template specialisation");
+      for (const auto&ts: Entry.templateSpecs)
         if (ts.isExact)
           S->Diags.Report(ts.src.Loc,IDTempSpecDeclExact)<<ts.src.range;
         else
           S->Diags.Report(ts.src.Loc,IDTempSpecDecl)<<ts.src.range;
-      }
     }
   }
   void printResEntry(const OvInsResEntry& Entry)const{
@@ -1383,9 +1381,9 @@ private:
     return res;
   }
   SourceRange sr;
-  SourceRange makeSrFromArgs(ArrayRef<Expr*> Args, SourceLocation Loc){
+  SourceRange makeSrFromArgs(ArrayRef<Expr*> Args, SourceLocation Loc)const{
     //Args can be reversed.
-    return makeSR({
+    return makeSourceRangeFromPossibleEndpoints({
           Loc,(Args.size() && Args[0]?Args[0]->getBeginLoc():SourceLocation{}),
           (Args.size() && Args.back()?Args.back()->getBeginLoc():SourceLocation{})
         },{
