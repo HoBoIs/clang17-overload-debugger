@@ -131,6 +131,8 @@ struct OvInsResEntry {
   clang::OverloadingResult ovRes;
   bool isImplicit = false;
   long passedTime;
+  //std::vector<std::pair<std::string,long>> TimePoints;
+  //std::chrono::time_point<std::chrono::steady_clock> lastTimePoint;
 };
 struct OvInsResNode {
   OvInsResEntry Entry;
@@ -333,10 +335,10 @@ class DefaultOverloadInstCallback : public OverloadCallback {
   struct cmpInfo {
     const Sema *TheSema;
     SourceLocation Loc;
+    BetterOverloadCandidateReason reason;
     const OverloadCandidate *Cand1;
     const OverloadCandidate *Cand2;
     bool C1Better;
-    BetterOverloadCandidateReason reason;
     int infoIdx;
     long duration;
     bool sameCands(const cmpInfo &o) const {
@@ -499,7 +501,7 @@ public:
     if (settings.measureTime)
       time = (std::chrono::steady_clock().now() - cmpStartTime).count();
     compares.push_back(
-        cmpInfo{&TheSema, Loc, &Cand1, &Cand2, res, reason, infoIdx, time});
+        cmpInfo{&TheSema, Loc, reason, &Cand1, &Cand2, res, infoIdx, time});
     inCompare = false;
   }
 
@@ -742,7 +744,7 @@ private:
           DiagnosticIDs::Note, "%0 explicit template specialivations found");
       S->Diags.Report(SourceLocation{}, IDTempSpecCnt)
           << Entry.templateSpecs.size();
-      unsigned IDTempSpecDecl = S->Diags.getDiagnosticIDs()->getCustomDiagID(
+      /*unsigned IDTempSpecDecl = S->Diags.getDiagnosticIDs()->getCustomDiagID(
           DiagnosticIDs::Note, "explicit template specialisation");
       unsigned IDTempSpecDeclExact =
           S->Diags.getDiagnosticIDs()->getCustomDiagID(
@@ -752,13 +754,14 @@ private:
         if (ts.isExact)
           S->Diags.Report(ts.src.Loc, IDTempSpecDeclExact) << ts.src.range;
         else
-          S->Diags.Report(ts.src.Loc, IDTempSpecDecl) << ts.src.range;
+          S->Diags.Report(ts.src.Loc, IDTempSpecDecl) << ts.src.range;*/
     }
   }
   void printResEntry(const OvInsResEntry &Entry) const {
     long timeDiff = Entry.passedTime;
-    for (const auto &cmp : Entry.compares)
-      timeDiff -= cmp.passedTime;
+    if (Entry.passedTime)
+      for (const auto &cmp : Entry.compares)
+        timeDiff -= cmp.passedTime;
     std::string types = concat(Entry.callTypes, ", ");
     auto ID0 = S->Diags.getDiagnosticIDs()->getCustomDiagID(
         DiagnosticIDs::Remark, "Overload resulted with %0 With types %1 %2");
@@ -783,7 +786,8 @@ private:
     for (const auto &x : Entry.compares)
       printCompareEntry(x, Entry.callSrc.Loc);
     // Entry.note;;
-    S->Diags.Report(SourceLocation{}, IDTime) << Entry.passedTime << timeDiff;
+    if (Entry.passedTime)
+      S->Diags.Report(SourceLocation{}, IDTime) << Entry.passedTime << timeDiff;
   }
   void printHumanReadable() const {
     for (const auto &x : cont)
@@ -851,6 +855,7 @@ private:
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
     const char *cc =
         getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
+    // Not handles all operators
     if (cc)
       os << cc;
     else {
@@ -868,7 +873,6 @@ private:
   }
   std::string getBuiltInOperatorName(const OverloadCandidate &C) const {
     assert(Set->CSK_Operator == Set->getKind() && "Not operator");
-    // Not handles all operators
     std::string res;
     llvm::raw_string_ostream os(res);
     os << "Built-in operator";

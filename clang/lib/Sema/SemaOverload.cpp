@@ -3773,8 +3773,8 @@ Sema::DiagnoseMultipleUserDefinedConversion(Expr *From, QualType ToType) {
   ImplicitConversionSequence ICS;
   OverloadCandidateSet CandidateSet(From->getExprLoc(),
                                     OverloadCandidateSet::CSK_Normal);
-  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(OverloadInspectionCallbacks, CandidateSet, {From,From->getEndLoc()});
+  //if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+  //  addSetInfo(OverloadInspectionCallbacks, CandidateSet, {From,From->getEndLoc()});
   OverloadingResult OvResult =
     IsUserDefinedConversion(*this, From, ToType, ICS.UserDefined,
                             CandidateSet, AllowedExplicit::None, false);
