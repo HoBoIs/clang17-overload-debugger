@@ -2801,10 +2801,27 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
         } else if (s.substr(0,9)=="CandName:"){
           Opts.OvInsSettings.CandFunName=s.substr(9);
         } else {
-          unsigned lF=0;
+          bool valid=true;
+          
+          size_t toSize;
+          int from=std::stoi(s,&toSize),to;
+          if (toSize==s.size())
+            to=from;
+          else
+            if (s[toSize]!='-')
+              valid=false;
+            else{
+              char* end;
+              to=std::strtol(s.c_str()+toSize+1,&end,10);
+              if (end!=s.size()+s.c_str())
+                valid=false;
+            }
+          if (from<0)
+            valid=false;
+          //TODO stoi;
+          /*unsigned lF=0;
           unsigned actual=0;
           bool lFfinished=false;
-          bool valid=true;
           for (const char& c:s){
             if (c=='-'){
               if (!lFfinished){
@@ -2821,18 +2838,16 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
               valid=false;
               break;
             }
-          }
-          if (lFfinished && valid && actual<lF){
+          }*/
+          if (valid && to<from){
+            //int id=Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Error,"The start of the interval must be not larger than it's end");
+            //Diags.Report(id);
             llvm::errs()<<"The start of the interval must be not larger than it's end\n";
             valid=false;
           }
           if (!valid)
             Diags.Report(diag::err_drv_invalid_value)<<A->getAsString(Args)<<s;
-          if (!lFfinished){
-            Opts.OvInsSettings.Intervals.emplace_back(actual,actual);
-          }else {
-            Opts.OvInsSettings.Intervals.emplace_back(lF,actual);
-          }
+          Opts.OvInsSettings.Intervals.emplace_back(from,to);
         } 
       }
     }

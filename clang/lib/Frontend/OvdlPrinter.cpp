@@ -425,8 +425,10 @@ public:
     Set = &set;
     Loc = loc;
 
-    if (!SetArgMap[&set].valid || SetArgMap[&set].Loc != Set->getLocation())
+    if (!SetArgMap[&set].valid || SetArgMap[&set].Loc != Set->getLocation()){
+      SetArgMap.erase(&set);
       return;
+    }
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     unsigned line = L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
@@ -574,14 +576,14 @@ private:
     return true;
   }
   bool nameOk() const {
-    bool qual = (settings.CandFunName.find("::") != std::string::npos);
+    bool hasNs = (settings.CandFunName.find("::") != std::string::npos);
     if (settings.CandFunName.empty())
       return true;
     for (const auto &cand : *Set) {
       if (cand.Function && !cand.IsSurrogate &&
           checkName(settings.CandFunName,
-                    qual ? cand.Function->getQualifiedNameAsString()
-                         : cand.Function->getNameAsString()))
+                    hasNs ? cand.Function->getQualifiedNameAsString()
+                          : cand.Function->getNameAsString()))
         return true;
       if (!cand.Function && !cand.IsSurrogate) {
         std::string s;
@@ -593,8 +595,8 @@ private:
       }
       if (cand.IsSurrogate) {
         if (checkName(settings.CandFunName,
-                      qual ? cand.Surrogate->getQualifiedNameAsString()
-                           : cand.Surrogate->getNameAsString()))
+                      hasNs ? cand.Surrogate->getQualifiedNameAsString()
+                            : cand.Surrogate->getNameAsString()))
           return true;
       }
     }

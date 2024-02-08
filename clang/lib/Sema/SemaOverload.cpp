@@ -9887,7 +9887,6 @@ bool clang::isBetterOverloadCandidate(
                         Cand1,Cand2,true,viability);
     return true;
   }
-    
 
   // [CUDA] A function with 'never' preference is marked not viable, therefore
   // is never shown up here. The worst preference shown up here is 'wrong side',
@@ -10028,7 +10027,7 @@ bool clang::isBetterOverloadCandidate(
       for (unsigned ArgIdx = StartArg; ArgIdx < NumArgs; ++ArgIdx)
         compares.push_back(CompareImplicitConversionSequences(S, Loc,
                                           Cand1.Conversions[ArgIdx],
-                                          Cand2.Conversions[ArgIdx])); 
+                                          Cand2.Conversions[ArgIdx]));
       for (const auto& c:S.OverloadInspectionCallbacks)
         c->setCompareInfo(compares);
     }
