@@ -29,6 +29,7 @@
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Overload.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/RISCVIntrinsicManager.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
@@ -3476,6 +3477,8 @@ Sema::SpecialMemberOverloadResult Sema::LookupSpecialMember(CXXRecordDecl *RD,
   // resolution. Lookup is only performed directly into the class since there
   // will always be a (possibly implicit) declaration to shadow any others.
   OverloadCandidateSet OCS(LookupLoc, OverloadCandidateSet::CSK_Normal);
+  //if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//Removed, no actual overload called
+  //  addSetInfo(OverloadInspectionCallbacks, OCS,{Arg});
   DeclContext::lookup_result R = RD->lookup(Name);
 
   if (R.empty()) {

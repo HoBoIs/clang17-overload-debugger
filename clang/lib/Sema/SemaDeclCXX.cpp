@@ -38,6 +38,7 @@
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Lookup.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Ownership.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
@@ -8166,6 +8167,8 @@ private:
         OverloadCandidateSet::OperatorRewriteInfo(
             OO, FD->getLocation(),
             /*AllowRewrittenCandidates=*/!SpaceshipCandidates));
+    //if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+    //  addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {Args,Args.back()->getEndLoc()});
 
     /// C++2a [class.compare.default]p1 [P2002R0]:
     ///   [...] the defaulted function itself is never a candidate for overload

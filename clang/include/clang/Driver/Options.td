@@ -7356,6 +7356,16 @@ def ast_dump_all_EQ : Joined<["-"], "ast-dump-all=">,
 def ast_dump_decl_types : Flag<["-"], "ast-dump-decl-types">,
   HelpText<"Include declaration types in AST dumps">,
   MarshallingInfoFlag<FrontendOpts<"ASTDumpDeclTypes">>;
+def ovins_dump : Flag<["-"], "ovins-dump">,
+  HelpText<"Dump ovins information to stdout">;
+def ovins_dump_opt : CommaJoined<["-"], "ovins-dump-opt=">,
+  //Flags<[CC1Option, NoDriverOption]>,
+  HelpText<"Duins ovdl information to stdout with options">;
+  //Values<"showIncludes,showEmptyOverloads,hideNotViableCand,hideCompares">,
+  //NormalizedValues<["showIncludes","showEmptyOverloads","hideNotViableCand","hideCompares"]>;
+  //MarshallingInfoEnum<DiagnosticOpts<"OvdlOpts">, "0">;
+//def ovdl_dump_line : Flag<["-"], "ovdl-dump-line=">, Group<f_Group>, Flags<[CC1Option]>,
+//  HelpText<"Dump ovdl information to stdout from line">;
 def templight_dump : Flag<["-"], "templight-dump">,
   HelpText<"Dump templight information to stdout">;
 def ast_dump_lookups : Flag<["-"], "ast-dump-lookups">,

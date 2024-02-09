@@ -2563,6 +2563,8 @@ static const auto &getFrontendActionTable() {
       {frontend::PrintPreamble, OPT_print_preamble},
       {frontend::PrintPreprocessedInput, OPT_E},
       {frontend::TemplightDump, OPT_templight_dump},
+      {frontend::OvInsDump, OPT_ovins_dump_opt},
+      {frontend::OvInsDump, OPT_ovins_dump},
       {frontend::RewriteMacros, OPT_rewrite_macros},
       {frontend::RewriteObjC, OPT_rewrite_objc},
       {frontend::RewriteTest, OPT_rewrite_test},
@@ -2621,6 +2623,34 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
     };
   }
 
+  if (Opts.ProgramAction == frontend::OvInsDump) {
+    GenerateProgramAction = [&]() {
+      static constexpr llvm::StringLiteral OptPrefixes[]{
+        "Hide","Show","Verbose"
+      };
+      std::string argStr;
+      llvm::raw_string_ostream os(argStr);
+      for (const auto&[from,to]:Opts.OvInsSettings.Intervals){
+        os<<from<<"-"<<to<<",";
+      }
+      if (Opts.OvInsSettings.CandFunName!="")
+        os<<"CandName:"<<Opts.OvInsSettings.CandFunName<<",";
+      os<<(Opts.OvInsSettings.ShowEmptyOverloads?"Show":"Hide")<<"EmptyOverloads,"
+        <<(Opts.OvInsSettings.ShowIncludes?"Show":"Hide")<<"Includes,"
+        <<(Opts.OvInsSettings.ShowNonViableCands?"Show":"Hide")<<"NonViableCands,"
+        <<(Opts.OvInsSettings.ShowImplicitConversions?"Show":"Hide")<<"ImplicitConversions,"
+        <<(Opts.OvInsSettings.ShowBuiltInNonViable?"Show":"Hide")<<"BuiltInNonViable,"
+        <<(Opts.OvInsSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
+        <<(Opts.OvInsSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
+        <<(Opts.OvInsSettings.measureTime?"Show":"Hide")<<"Time,"
+        <<OptPrefixes[Opts.OvInsSettings.ShowCompares]<<"Compares,"
+        <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
+        <<(Opts.OvInsSettings.PrintYAML?",PrintYAML":"")
+        <<(Opts.OvInsSettings.Help?",Help":"");
+      GenerateArg(Consumer, OPT_ovins_dump_opt,argStr);
+    };
+
+  }
   // FIXME: Simplify the complex 'AST dump' command line.
   if (Opts.ProgramAction == frontend::ASTDump) {
     GenerateProgramAction = [&]() {
@@ -2798,6 +2828,114 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 
     if (ProgramAction == frontend::FixIt && Opt == OPT_fixit_EQ)
       Opts.FixItSuffix = A->getValue();
+    if (ProgramAction == frontend::OvInsDump){
+      if (Opt== OPT_ovins_dump){
+      }
+    }
+    if (ProgramAction == frontend::OvInsDump && Opt == OPT_ovins_dump_opt){
+      const auto& x=A->getValues();
+      for (const std::string s:x){
+        if (s=="ShowNonViableCands"){
+          Opts.OvInsSettings.ShowNonViableCands=true;
+        } else if (s=="HideNonViableCands"){
+          Opts.OvInsSettings.ShowNonViableCands=false;
+        } else if (s=="ShowIncludes"){
+          Opts.OvInsSettings.ShowIncludes=true;
+        } else if (s=="HideIncludes"){
+          Opts.OvInsSettings.ShowIncludes=false;
+        } else if (s=="ShowEmptyOverloads"){
+          Opts.OvInsSettings.ShowEmptyOverloads=true;
+        } else if (s=="HideEmptyOverloads"){
+          Opts.OvInsSettings.ShowEmptyOverloads=false;
+        } else if (s=="ShowBuiltInNonViable"){
+          Opts.OvInsSettings.ShowBuiltInNonViable=true;
+        } else if (s=="HideBuiltInNonViable"){
+          Opts.OvInsSettings.ShowBuiltInNonViable=false;
+        } else if (s=="ShowImplicitConversions"){
+          Opts.OvInsSettings.ShowImplicitConversions=true;
+        } else if (s=="HideImplicitConversions"){
+          Opts.OvInsSettings.ShowImplicitConversions=false;
+        } else if (s=="ShowConversions"){
+          Opts.OvInsSettings.ShowConversions=clang::FrontendOptions::SC_Normal;
+        } else if (s=="HideConversions"){
+          Opts.OvInsSettings.ShowConversions=clang::FrontendOptions::SC_Hide;
+        } else if (s=="VerboseConversions"){
+          Opts.OvInsSettings.ShowConversions=clang::FrontendOptions::SC_Verbose;
+        } else if (s=="ShowCompares"){
+          Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Normal;
+        } else if (s=="HideCompares"){
+          Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Hide;
+        } else if (s=="VerboseCompares"){
+          Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Verbose;
+        } else if (s=="ShowTime"){
+          Opts.OvInsSettings.measureTime=true;
+        } else if (s=="HideTime"){
+          Opts.OvInsSettings.measureTime=false;
+        } else if (s=="SummarizeBuiltInBinOps"){
+          Opts.OvInsSettings.SummarizeBuiltInBinOps=true;
+        } else if (s=="ShowBuiltInBinOps"){
+          Opts.OvInsSettings.SummarizeBuiltInBinOps=false;
+        } else if (s=="ShowTemplateSpecs"){
+          Opts.OvInsSettings.ShowTemplateSpecs=true;
+        } else if (s=="HideTemplateSpecs"){
+          Opts.OvInsSettings.ShowTemplateSpecs=false;
+        } else if (s=="PrintYAML"){
+          Opts.OvInsSettings.PrintYAML=true;
+        } else if (s=="Help"){
+          Opts.OvInsSettings.Help=true;
+        } else if (s.substr(0,9)=="CandName:"){
+          Opts.OvInsSettings.CandFunName=s.substr(9);
+        } else {
+          bool valid=true;
+          
+          size_t toSize;
+          int from=std::stoi(s,&toSize),to;
+          if (toSize==s.size())
+            to=from;
+          else
+            if (s[toSize]!='-')
+              valid=false;
+            else{
+              char* end;
+              to=std::strtol(s.c_str()+toSize+1,&end,10);
+              if (end!=s.size()+s.c_str())
+                valid=false;
+            }
+          if (from<0)
+            valid=false;
+          //TODO stoi;
+          /*unsigned lF=0;
+          unsigned actual=0;
+          bool lFfinished=false;
+          for (const char& c:s){
+            if (c=='-'){
+              if (!lFfinished){
+                lFfinished=true;
+                lF=actual;
+                actual=0;
+              }else{
+                valid=false;
+                break;
+              }
+            }else if(c>='0' && c<='9'){
+              actual=10*actual+c-'0';
+            }else{
+              valid=false;
+              break;
+            }
+          }*/
+          if (valid && to<from){
+            //int id=Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Error,"The start of the interval must be not larger than it's end");
+            //Diags.Report(id);
+            llvm::errs()<<"The start of the interval must be not larger than it's end\n";
+            valid=false;
+          }
+          if (!valid)
+            Diags.Report(diag::err_drv_invalid_value)<<A->getAsString(Args)<<s;
+          Opts.OvInsSettings.Intervals.emplace_back(from,to);
+        } 
+      }
+    }
 
     if (ProgramAction == frontend::GenerateInterfaceStubs) {
       StringRef ArgStr =
@@ -4288,6 +4426,7 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
   case frontend::TemplightDump:
+  case frontend::OvInsDump:
   case frontend::MigrateSource:
     return false;
 

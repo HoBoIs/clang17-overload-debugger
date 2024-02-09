@@ -209,7 +209,13 @@ protected:
 public:
   bool hasCodeCompletionSupport() const override { return false; }
 };
+class OvInsDumpAction :public ASTFrontendAction{
+protected:
+  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+                                                 StringRef InFile) override;
 
+  void ExecuteAction() override;
+};
 class TemplightDumpAction : public ASTFrontendAction {
 protected:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,

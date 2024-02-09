@@ -2926,6 +2926,8 @@ StmtResult Sema::BuildCXXForRangeStmt(
     } else {
       OverloadCandidateSet CandidateSet(RangeLoc,
                                         OverloadCandidateSet::CSK_Normal);
+      //if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
+      //  addSetInfo(OverloadInspectionCallbacks, CandidateSet, {});
       BeginEndFunction BEFFailure;
       ForRangeStatus RangeStatus = BuildNonArrayForRange(
           *this, BeginRangeRef.get(), EndRangeRef.get(), RangeType, BeginVar,

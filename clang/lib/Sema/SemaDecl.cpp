@@ -18932,6 +18932,8 @@ static void ComputeSelectedDestructor(Sema &S, CXXRecordDecl *Record) {
 
   SourceLocation Loc = Record->getLocation();
   OverloadCandidateSet OCS(Loc, OverloadCandidateSet::CSK_Normal);
+  //if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//Removed No info on destructors
+  //  addSetInfo(S.OverloadInspectionCallbacks, OCS, {});
 
   for (auto *Decl : Record->decls()) {
     if (auto *DD = dyn_cast<CXXDestructorDecl>(Decl)) {

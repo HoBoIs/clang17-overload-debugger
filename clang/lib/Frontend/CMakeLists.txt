@@ -42,6 +42,9 @@ add_clang_library(clangFrontend
   TextDiagnosticPrinter.cpp
   VerifyDiagnosticConsumer.cpp
   InterfaceStubFunctionsConsumer.cpp
+  OvInsEnumPrints.cpp
+  OvdlPrinter.cpp
+  
 
   DEPENDS
   ClangDriverOptions

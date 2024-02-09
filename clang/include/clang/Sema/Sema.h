@@ -190,6 +190,7 @@ namespace clang {
   class TemplateArgumentLoc;
   class TemplateDecl;
   class TemplateInstantiationCallback;
+  class OverloadCallback;
   class TemplateParameterList;
   class TemplatePartialOrderingContext;
   class TemplateTemplateParmDecl;
@@ -2427,7 +2428,7 @@ public:
   }
 
   /// Get the module owning an entity.
-  Module *getOwningModule(const Decl *Entity) {
+  Module *getOwningModule(const Decl *Entity) const {
     return Entity->getOwningModule();
   }
 
@@ -2548,7 +2549,7 @@ public:
   /// from different modules, and thus an ambiguity error can be downgraded to
   /// an extension warning.
   bool isEquivalentInternalLinkageDeclaration(const NamedDecl *A,
-                                              const NamedDecl *B);
+                                              const NamedDecl *B)const;
   void diagnoseEquivalentInternalLinkageDeclarations(
       SourceLocation Loc, const NamedDecl *D,
       ArrayRef<const NamedDecl *> Equiv);
@@ -9749,6 +9750,10 @@ public:
   /// instantiations as they are being constructed.
   std::vector<std::unique_ptr<TemplateInstantiationCallback>>
       TemplateInstCallbacks;
+
+
+  llvm::SmallVector<std::unique_ptr<OverloadCallback>,1>
+      OverloadInspectionCallbacks;
 
   /// The current index into pack expansion arguments that will be
   /// used for substitution of parameter packs.
