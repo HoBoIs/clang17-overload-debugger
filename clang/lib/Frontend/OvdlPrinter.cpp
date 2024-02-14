@@ -1,3 +1,4 @@
+#include "clang/AST/DeclCXX.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -7,6 +8,7 @@
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -70,7 +72,7 @@ struct OvInsCandEntry {
   std::string name;
   std::string usingLocation;
   clang::SourceLocation usingLoc;
-  OverloadCandidateRewriteKind rewriteKind;
+  OverloadCandidateRewriteKind rewriteKind=clang::CRK_None;
   std::deque<std::string> paramTypes;
   OvInsSource src;
   std::vector<OvInsTemplateSpec> templateSpecs;
@@ -1102,6 +1104,7 @@ private:
     const auto callKinds = getCallKinds();
     const SetArgs &setArg = getSetArgs();
     bool isStaticCall = setArg.ObjectExpr == nullptr && C.IgnoreObjectArgument;
+    //if (C.Function && C.Function){isStaticCall=true;}
     for (size_t i = 0; i < C.Conversions.size(); ++i) {
       const ExprValueKind fromKind =
           (callKinds.size() > i - isStaticCall)
@@ -1109,13 +1112,18 @@ private:
               : VK_LValue;
       const auto &conv = C.Conversions[i];
       OvInsConvEntry &actual = res[i];
+      bool isDeduceThis=false;
       {
         int inArgsIdx = i;
-        if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
-             !isa<CXXConstructorDecl>(C.Function) && setArg.ObjectExpr) ||
-            C.IsSurrogate)
-          --inArgsIdx;
-        actual.src = getConversionSource(setArg, inArgsIdx);
+        if (auto* fp=llvm::dyn_cast_or_null<CXXMethodDecl>(C.Function)){
+          isDeduceThis = fp->isExplicitObjectMemberFunction();
+        }
+        if (!isDeduceThis)
+          if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
+              !isa<CXXConstructorDecl>(C.Function) && setArg.ObjectExpr) ||
+              C.IsSurrogate)
+            --inArgsIdx;
+        actual.src = getConversionSource(setArg, inArgsIdx-isDeduceThis);
       }
       if (!conv.isInitialized()) {
         actual.kind = "Uninitialized";
@@ -1124,6 +1132,7 @@ private:
       int idx = i;
       if (C.isReversed())
         idx = 1 - idx;
+      //if (!isDeduceThis)
       if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
            !isa<CXXConstructorDecl>(C.Function)) ||
           C.IsSurrogate)
@@ -1138,7 +1147,7 @@ private:
         if (C.Function && idx != -1 &&
             !isa<clang::InitListExpr>(setArg.inArgs[idx]))
           path << " -> "
-               << C.Function->parameters()[idx]
+               << C.Function->parameters()[idx+isDeduceThis]
                       ->getType()
                       .getCanonicalType()
                       .getAsString();
@@ -1204,6 +1213,7 @@ private:
         if (temp != "")
           path << " = " << temp;
       }
+      //path << i<<" "<<idx;
     }
 
     return res;
@@ -1284,8 +1294,6 @@ private:
       res.usingLoc.print(usingLoc, S->SourceMgr);
     }
     res.rewriteKind = C.getRewriteKind();
-    if (!C.Function && !C.IsSurrogate)
-      res.rewriteKind = OverloadCandidateRewriteKind::CRK_None;
     res.name = C.FoundDecl.getDecl()->getQualifiedNameAsString();
     if (C.Function) {
       res.paramTypes = getParamTypes(C);
