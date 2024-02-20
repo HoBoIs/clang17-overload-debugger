@@ -1076,6 +1076,7 @@ DeduceTemplateArguments(Sema &S,
   //   Pi of the respective parameter-type- list of P is compared with the
   //   corresponding parameter type Ai of the corresponding parameter-type-list
   //   of A. [...]
+  Sema::TemplateDeductionResult::TDK_NonDeducedMismatch;
   unsigned ArgIdx = 0, ParamIdx = 0;
   for (; ParamIdx != NumParams; ++ParamIdx) {
     // Check argument types.
@@ -5293,10 +5294,31 @@ bool Sema::CheckIfFunctionSpecializationIsImmediate(FunctionDecl *FD,
   return false;
 }
 
+static void
+AddImplicitObjectParameterTypeCXX20(ASTContext &Context,
+                               const CXXMethodDecl *Method,
+                               bool isOtherRvr,
+                               SmallVectorImpl<QualType> &ArgTypes) {
+  //- The type X(M ) is “rvalue reference to cv A” if the optional ref-qualifier of M is && or if M has no
+  //  ref-qualifier and the positionally-corresponding parameter of the other transformed template has rvalue
+  //  reference type; if this determination depends recursively upon whether X(M ) is an rvalue reference
+  //  type, it is not considered to have rvalue reference type.
+  //- Otherwise, X(M ) is “lvalue reference to cv A”.
+  assert(Method && !Method->isExplicitObjectMemberFunction()&&" ");
+
+  QualType ArgTy = Context.getTypeDeclType(Method->getParent());
+  ArgTy = Context.getQualifiedType(ArgTy, Method->getMethodQualifiers());
+  if (Method->getRefQualifier() == RQ_RValue || (isOtherRvr && Method->getRefQualifier()==RQ_None)) 
+    ArgTy = Context.getRValueReferenceType(ArgTy);
+  else
+    ArgTy = Context.getLValueReferenceType(ArgTy);
+  ArgTypes.push_back(ArgTy);
+
+}
 /// If this is a non-static member function,
 static void
 AddImplicitObjectParameterType(ASTContext &Context,
-                               CXXMethodDecl *Method,
+                               const CXXMethodDecl *Method,
                                SmallVectorImpl<QualType> &ArgTypes) {
   // C++11 [temp.func.order]p3:
   //   [...] The new parameter is of type "reference to cv A," where cv are
@@ -5320,11 +5342,13 @@ AddImplicitObjectParameterType(ASTContext &Context,
 /// specialized as \p FT2.
 static bool isAtLeastAsSpecializedAs(Sema &S,
                                      SourceLocation Loc,
-                                     FunctionTemplateDecl *FT1,
-                                     FunctionTemplateDecl *FT2,
+                                     const FunctionTemplateDecl *FT1,
+                                     const FunctionTemplateDecl *FT2,
                                      TemplatePartialOrderingContext TPOC,
                                      unsigned NumCallArguments1,
-                                     bool Reversed) {
+                                     bool Reversed,
+                                     const SmallVector<QualType, 4>& Args1,
+                                     const SmallVector<QualType, 4>& Args2) {
   assert(!Reversed || TPOC == TPOC_Call);
 
   FunctionDecl *FD1 = FT1->getTemplatedDecl();
@@ -5341,66 +5365,8 @@ static bool isAtLeastAsSpecializedAs(Sema &S,
   //   The types used to determine the ordering depend on the context in which
   //   the partial ordering is done:
   TemplateDeductionInfo Info(Loc);
-  SmallVector<QualType, 4> Args2;
   switch (TPOC) {
   case TPOC_Call: {
-    //   - In the context of a function call, the function parameter types are
-    //     used.
-    CXXMethodDecl *Method1 = dyn_cast<CXXMethodDecl>(FD1);
-    CXXMethodDecl *Method2 = dyn_cast<CXXMethodDecl>(FD2);
-
-    // C++11 [temp.func.order]p3:
-    //   [...] If only one of the function templates is a non-static
-    //   member, that function template is considered to have a new
-    //   first parameter inserted in its function parameter list. The
-    //   new parameter is of type "reference to cv A," where cv are
-    //   the cv-qualifiers of the function template (if any) and A is
-    //   the class of which the function template is a member.
-    //
-    // Note that we interpret this to mean "if one of the function
-    // templates is a non-static member and the other is a non-member";
-    // otherwise, the ordering rules for static functions against non-static
-    // functions don't make any sense.
-    //
-    // C++98/03 doesn't have this provision but we've extended DR532 to cover
-    // it as wording was broken prior to it.
-    SmallVector<QualType, 4> Args1;
-
-    unsigned NumComparedArguments = NumCallArguments1;
-
-    if (!Method2 && Method1 && Method1->isImplicitObjectMemberFunction()) {
-      // Compare 'this' from Method1 against first parameter from Method2.
-      AddImplicitObjectParameterType(S.Context, Method1, Args1);
-      ++NumComparedArguments;
-    } else if (!Method1 && Method2 &&
-               Method2->isImplicitObjectMemberFunction()) {
-      // Compare 'this' from Method2 against first parameter from Method1.
-      AddImplicitObjectParameterType(S.Context, Method2, Args2);
-    } else if (Method1 && Method2 && Reversed &&
-               Method1->isImplicitObjectMemberFunction() &&
-               Method2->isImplicitObjectMemberFunction()) {
-      // Compare 'this' from Method1 against second parameter from Method2
-      // and 'this' from Method2 against second parameter from Method1.
-      AddImplicitObjectParameterType(S.Context, Method1, Args1);
-      AddImplicitObjectParameterType(S.Context, Method2, Args2);
-      ++NumComparedArguments;
-    }
-
-    Args1.insert(Args1.end(), Proto1->param_type_begin(),
-                 Proto1->param_type_end());
-    Args2.insert(Args2.end(), Proto2->param_type_begin(),
-                 Proto2->param_type_end());
-
-    // C++ [temp.func.order]p5:
-    //   The presence of unused ellipsis and default arguments has no effect on
-    //   the partial ordering of function templates.
-    if (Args1.size() > NumComparedArguments)
-      Args1.resize(NumComparedArguments);
-    if (Args2.size() > NumComparedArguments)
-      Args2.resize(NumComparedArguments);
-    if (Reversed)
-      std::reverse(Args2.begin(), Args2.end());
-
     if (DeduceTemplateArguments(S, TemplateParams, Args2.data(), Args2.size(),
                                 Args1.data(), Args1.size(), Info, Deduced,
                                 TDF_None, /*PartialOrdering=*/true))
@@ -5508,11 +5474,97 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
     FunctionTemplateDecl *FT1, FunctionTemplateDecl *FT2, SourceLocation Loc,
     TemplatePartialOrderingContext TPOC, unsigned NumCallArguments1,
     unsigned NumCallArguments2, bool Reversed) {
+  
+  SmallVector<QualType, 4> Args1;
+  SmallVector<QualType, 4> Args2;
+  const FunctionDecl *FD1 = FT1->getTemplatedDecl();
+  const FunctionDecl *FD2 = FT2->getTemplatedDecl();
+  const FunctionProtoType *Proto1 = FD1->getType()->getAs<FunctionProtoType>();
+  const FunctionProtoType *Proto2 = FD2->getType()->getAs<FunctionProtoType>();
+
+  //   - In the context of a function call, the function parameter types are
+  //     used.
+  const CXXMethodDecl *Method1 = dyn_cast<CXXMethodDecl>(FD1);
+  const CXXMethodDecl *Method2 = dyn_cast<CXXMethodDecl>(FD2);
+
+  bool shouldConvert1;
+  bool shouldConvert2;
+  if (getLangOpts().CPlusPlus20){
+    // C++20 [temp.func.order]p3
+    //   [...] Each function template M that is a member function is considered to have a new first parameter of type
+    //   X(M), described below, inserted in its function parameter list.
+    //
+    // Note that we interpret "that is a member function" as 
+    // "that is a member function with no expicit object argument". 
+    // Otherwise the ordering rules for methods with expicit objet arguments
+    // against anything else make no sense.
+    shouldConvert1= Method1 && !Method1->isExplicitObjectMemberFunction();
+    shouldConvert2= Method2 && !Method2->isExplicitObjectMemberFunction();
+    bool isR1=Method1 && !Method1->isExplicitObjectMemberFunction() ? 
+                Method1->getRefQualifier() == RQ_RValue:
+                //Proto1->getRefQualifier() ==RQ_RValue;
+                Proto1->param_type_begin()[0]->isRValueReferenceType();
+    bool isR2=Method2 && !Method2->isExplicitObjectMemberFunction() ? 
+                Method2->getRefQualifier() == RQ_RValue:
+                Proto2->param_type_begin()[0]->isRValueReferenceType();
+                //FD2->getParamDecl(0)->getRefQualifier() ==RQ_RValue;
+    if (shouldConvert1) 
+      // Compare 'this' from Method1 against first parameter from Method2.
+      AddImplicitObjectParameterTypeCXX20(this->Context, Method1,isR2, Args1);
+    if (shouldConvert2) 
+      // Compare 'this' from Method2 against first parameter from Method1.
+      AddImplicitObjectParameterTypeCXX20(this->Context, Method2,isR1, Args2);
+  }else{
+    // C++11 [temp.func.order]p3:
+    //   [...] If only one of the function templates is a non-static
+    //   member, that function template is considered to have a new
+    //   first parameter inserted in its function parameter list. The
+    //   new parameter is of type "reference to cv A," where cv are
+    //   the cv-qualifiers of the function template (if any) and A is
+    //   the class of which the function template is a member.
+    //
+    // Note that we interpret this to mean "if one of the function
+    // templates is a non-static member and the other is a non-member";
+    // otherwise, the ordering rules for static functions against non-static
+    // functions don't make any sense.
+    //
+    // C++98/03 doesn't have this provision but we've extended DR532 to cover
+    // it as wording was broken prior to it.
+    shouldConvert1=!Method2 && Method1 && Method1->isImplicitObjectMemberFunction();
+    shouldConvert2=!Method1 && Method2 && Method2->isImplicitObjectMemberFunction();
+    if (shouldConvert1) 
+      // Compare 'this' from Method1 against first parameter from Method2.
+      AddImplicitObjectParameterType(this->Context, Method1, Args1);
+    if (shouldConvert2) 
+      // Compare 'this' from Method2 against first parameter from Method1.
+      AddImplicitObjectParameterType(this->Context, Method2, Args2);
+  }
+  unsigned NumComparedArguments = NumCallArguments1 + shouldConvert1;
+
+  Args1.insert(Args1.end(), Proto1->param_type_begin(),
+               Proto1->param_type_end());
+  Args2.insert(Args2.end(), Proto2->param_type_begin(),
+               Proto2->param_type_end());
+
+  // C++ [temp.func.order]p5:
+  //   The presence of unused ellipsis and default arguments has no effect on
+  //   the partial ordering of function templates.
+  if (Args1.size() > NumComparedArguments)
+    Args1.resize(NumComparedArguments);
+  if (Args2.size() > NumComparedArguments)
+    Args2.resize(NumComparedArguments);
+  if (Reversed)
+    std::reverse(Args2.begin(), Args2.end());
 
   bool Better1 = isAtLeastAsSpecializedAs(*this, Loc, FT1, FT2, TPOC,
-                                          NumCallArguments1, Reversed);
+                                          NumCallArguments1, Reversed,Args1,Args2);
   bool Better2 = isAtLeastAsSpecializedAs(*this, Loc, FT2, FT1, TPOC,
-                                          NumCallArguments2, Reversed);
+                                          NumCallArguments2, Reversed,Args2,Args1);
+  FT1->dump();
+  llvm::errs()<<"---\n";
+  FT2->dump();
+  llvm::errs()<<"---"<<NumCallArguments1<<" "<<NumCallArguments2<<"\n";
+  llvm::errs()<<"---"<<Better1<<" "<<Better2<<"\n";
 
   // C++ [temp.deduct.partial]p10:
   //   F is more specialized than G if F is at least as specialized as G and G
@@ -5527,24 +5579,55 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
   //   ... and if G has a trailing function parameter pack for which F does not
   //   have a corresponding parameter, and if F does not have a trailing
   //   function parameter pack, then F is more specialized than G.
-  FunctionDecl *FD1 = FT1->getTemplatedDecl();
-  FunctionDecl *FD2 = FT2->getTemplatedDecl();
-  unsigned NumParams1 = FD1->getNumParams();
+
+  SmallVector<ParmVarDecl*> param1; 
+  if (shouldConvert1){
+    param1.push_back({});//TODO
+  }
+  param1.insert(param1.end(), FD1->parameters().begin(),
+                FD1->parameters().end());
+
+  SmallVector<ParmVarDecl*> param2; 
+  if (shouldConvert2){
+    param2.push_back({});//TODO
+  }
+  param2.insert(param2.end(), FD2->parameters().begin(),
+                FD2->parameters().end());
+
+  unsigned NumParams1 = param1.size();
+  unsigned NumParams2 = param2.size();
+  /*unsigned NumParams1 = FD1->getNumParams();
   unsigned NumParams2 = FD2->getNumParams();
+  
+  if (Method1) {
+    llvm::errs()<<"METHOD1:";
+    Method1->dump();
+    for (const auto& x:Method1->parameters()){
+      x->dump();
+    }
+    llvm::errs()<<"#";
+    Method1->getNonObjectParameter(0)->dump();
+    llvm::errs()<<"=#";
+    Method1->getThisType().dump();
+    llvm::errs()<<"#=";
+    Method1->getType().dump();
+  }*/
   bool Variadic1 = NumParams1 && FD1->parameters().back()->isParameterPack();
   bool Variadic2 = NumParams2 && FD2->parameters().back()->isParameterPack();
   if (Variadic1 != Variadic2) {
-    if (Variadic1 && NumParams1 > NumParams2)
+    if (Variadic1 && NumParams1 + shouldConvert1 > NumParams2 + shouldConvert2)
       return FT2;
-    if (Variadic2 && NumParams2 > NumParams1)
+    if (Variadic2 && NumParams2 + shouldConvert2 > NumParams1 + shouldConvert1)
       return FT1;
   }
 
   // This a speculative fix for CWG1432 (Similar to the fix for CWG1395) that
   // there is no wording or even resolution for this issue.
   for (int i = 0, e = std::min(NumParams1, NumParams2); i < e; ++i) {
-    QualType T1 = FD1->getParamDecl(i)->getType().getCanonicalType();
-    QualType T2 = FD2->getParamDecl(i)->getType().getCanonicalType();
+    if (!param1[i] || !param2[i])
+      continue;
+    QualType T1 = param1[i]->getType().getCanonicalType();
+    QualType T2 = param2[i]->getType().getCanonicalType();
     auto *TST1 = dyn_cast<TemplateSpecializationType>(T1);
     auto *TST2 = dyn_cast<TemplateSpecializationType>(T2);
     if (!TST1 || !TST2)
@@ -5600,9 +5683,10 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
     return nullptr;
 
   for (unsigned i = 0; i < NumParams1; ++i)
-    if (!Context.hasSameType(FD1->getParamDecl(i)->getType(),
-                             FD2->getParamDecl(i)->getType()))
-      return nullptr;
+    if (param1[i] && param2[i])//TODO: write in from args
+      if (!Context.hasSameType(param1[i]->getType(),
+                               param2[i]->getType()))
+        return nullptr;
 
   // C++20 [temp.func.order]p6.3:
   //   Otherwise, if the context in which the partial ordering is done is
