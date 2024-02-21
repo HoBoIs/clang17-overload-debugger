@@ -1076,7 +1076,6 @@ DeduceTemplateArguments(Sema &S,
   //   Pi of the respective parameter-type- list of P is compared with the
   //   corresponding parameter type Ai of the corresponding parameter-type-list
   //   of A. [...]
-  Sema::TemplateDeductionResult::TDK_NonDeducedMismatch;
   unsigned ArgIdx = 0, ParamIdx = 0;
   for (; ParamIdx != NumParams; ++ParamIdx) {
     // Check argument types.
@@ -1102,8 +1101,12 @@ DeduceTemplateArguments(Sema &S,
                   S, TemplateParams, Params[ParamIdx].getUnqualifiedType(),
                   Args[ArgIdx].getUnqualifiedType(), Info, Deduced, TDF,
                   PartialOrdering,
-                  /*DeducedFromArrayBound=*/false))
+                  /*DeducedFromArrayBound=*/false)){
+        llvm::errs()<<Result<<"=x";
+      Args[ArgIdx].dump();
+Params[ParamIdx].dump();
         return Result;
+      }
 
       ++ArgIdx;
       continue;
@@ -5489,6 +5492,8 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
 
   bool shouldConvert1;
   bool shouldConvert2;
+  QualType ObjType1;
+  QualType ObjType2;
   if (getLangOpts().CPlusPlus20){
     // C++20 [temp.func.order]p3
     //   [...] Each function template M that is a member function is considered to have a new first parameter of type
@@ -5500,20 +5505,26 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
     // against anything else make no sense.
     shouldConvert1= Method1 && !Method1->isExplicitObjectMemberFunction();
     shouldConvert2= Method2 && !Method2->isExplicitObjectMemberFunction();
-    bool isR1=Method1 && !Method1->isExplicitObjectMemberFunction() ? 
-                Method1->getRefQualifier() == RQ_RValue:
-                //Proto1->getRefQualifier() ==RQ_RValue;
-                Proto1->param_type_begin()[0]->isRValueReferenceType();
-    bool isR2=Method2 && !Method2->isExplicitObjectMemberFunction() ? 
+    if (shouldConvert1 && shouldConvert2 && !Reversed){
+      shouldConvert1=false;
+      shouldConvert2=false;
+    }
+    if (shouldConvert1){ 
+      bool isR2=Method2 && !Method2->isExplicitObjectMemberFunction() ? 
                 Method2->getRefQualifier() == RQ_RValue:
                 Proto2->param_type_begin()[0]->isRValueReferenceType();
-                //FD2->getParamDecl(0)->getRefQualifier() ==RQ_RValue;
-    if (shouldConvert1) 
       // Compare 'this' from Method1 against first parameter from Method2.
       AddImplicitObjectParameterTypeCXX20(this->Context, Method1,isR2, Args1);
-    if (shouldConvert2) 
+      ObjType1=Args1[0];
+    }
+    if (shouldConvert2) {
+      bool isR1=Method1 && !Method1->isExplicitObjectMemberFunction() ? 
+                Method1->getRefQualifier() == RQ_RValue:
+                Proto1->param_type_begin()[0]->isRValueReferenceType();
       // Compare 'this' from Method2 against first parameter from Method1.
       AddImplicitObjectParameterTypeCXX20(this->Context, Method2,isR1, Args2);
+      ObjType2=Args2[0];
+    }
   }else{
     // C++11 [temp.func.order]p3:
     //   [...] If only one of the function templates is a non-static
@@ -5532,12 +5543,16 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
     // it as wording was broken prior to it.
     shouldConvert1=!Method2 && Method1 && Method1->isImplicitObjectMemberFunction();
     shouldConvert2=!Method1 && Method2 && Method2->isImplicitObjectMemberFunction();
-    if (shouldConvert1) 
+    if (shouldConvert1){ 
       // Compare 'this' from Method1 against first parameter from Method2.
       AddImplicitObjectParameterType(this->Context, Method1, Args1);
-    if (shouldConvert2) 
+      ObjType1=Args1[0];
+    }
+    if (shouldConvert2){ 
       // Compare 'this' from Method2 against first parameter from Method1.
       AddImplicitObjectParameterType(this->Context, Method2, Args2);
+      ObjType2=Args2[0];
+    }
   }
   unsigned NumComparedArguments = NumCallArguments1 + shouldConvert1;
 
@@ -5560,11 +5575,6 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
                                           NumCallArguments1, Reversed,Args1,Args2);
   bool Better2 = isAtLeastAsSpecializedAs(*this, Loc, FT2, FT1, TPOC,
                                           NumCallArguments2, Reversed,Args2,Args1);
-  FT1->dump();
-  llvm::errs()<<"---\n";
-  FT2->dump();
-  llvm::errs()<<"---"<<NumCallArguments1<<" "<<NumCallArguments2<<"\n";
-  llvm::errs()<<"---"<<Better1<<" "<<Better2<<"\n";
 
   // C++ [temp.deduct.partial]p10:
   //   F is more specialized than G if F is at least as specialized as G and G
@@ -5580,54 +5590,37 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
   //   have a corresponding parameter, and if F does not have a trailing
   //   function parameter pack, then F is more specialized than G.
 
-  SmallVector<ParmVarDecl*> param1; 
-  if (shouldConvert1){
-    param1.push_back({});//TODO
-  }
-  param1.insert(param1.end(), FD1->parameters().begin(),
-                FD1->parameters().end());
+  SmallVector<QualType> param1; 
+  param1.reserve(FD1->param_size()+shouldConvert1);
+  if (shouldConvert1)
+    param1.push_back(ObjType1);
+  for (const auto& x:FD1->parameters())
+    param1.push_back(x->getType());
 
-  SmallVector<ParmVarDecl*> param2; 
-  if (shouldConvert2){
-    param2.push_back({});//TODO
-  }
-  param2.insert(param2.end(), FD2->parameters().begin(),
-                FD2->parameters().end());
+  SmallVector<QualType> param2; 
+  param2.reserve(FD2->param_size()+shouldConvert2);
+  if (shouldConvert2)
+    param2.push_back(ObjType2);
+  for (const auto& x:FD2->parameters())
+    param2.push_back(x->getType());
 
   unsigned NumParams1 = param1.size();
   unsigned NumParams2 = param2.size();
-  /*unsigned NumParams1 = FD1->getNumParams();
-  unsigned NumParams2 = FD2->getNumParams();
-  
-  if (Method1) {
-    llvm::errs()<<"METHOD1:";
-    Method1->dump();
-    for (const auto& x:Method1->parameters()){
-      x->dump();
-    }
-    llvm::errs()<<"#";
-    Method1->getNonObjectParameter(0)->dump();
-    llvm::errs()<<"=#";
-    Method1->getThisType().dump();
-    llvm::errs()<<"#=";
-    Method1->getType().dump();
-  }*/
-  bool Variadic1 = NumParams1 && FD1->parameters().back()->isParameterPack();
-  bool Variadic2 = NumParams2 && FD2->parameters().back()->isParameterPack();
+
+  bool Variadic1 = FD1->param_size() && FD1->parameters().back()->isParameterPack();
+  bool Variadic2 = FD2->param_size() && FD2->parameters().back()->isParameterPack();
   if (Variadic1 != Variadic2) {
-    if (Variadic1 && NumParams1 + shouldConvert1 > NumParams2 + shouldConvert2)
+    if (Variadic1 && NumParams1 > NumParams2 )
       return FT2;
-    if (Variadic2 && NumParams2 + shouldConvert2 > NumParams1 + shouldConvert1)
+    if (Variadic2 && NumParams2 > NumParams1 )
       return FT1;
   }
 
   // This a speculative fix for CWG1432 (Similar to the fix for CWG1395) that
   // there is no wording or even resolution for this issue.
   for (int i = 0, e = std::min(NumParams1, NumParams2); i < e; ++i) {
-    if (!param1[i] || !param2[i])
-      continue;
-    QualType T1 = param1[i]->getType().getCanonicalType();
-    QualType T2 = param2[i]->getType().getCanonicalType();
+    QualType T1 = param1[i].getCanonicalType();
+    QualType T2 = param2[i].getCanonicalType();
     auto *TST1 = dyn_cast<TemplateSpecializationType>(T1);
     auto *TST2 = dyn_cast<TemplateSpecializationType>(T2);
     if (!TST1 || !TST2)
@@ -5683,10 +5676,8 @@ FunctionTemplateDecl *Sema::getMoreSpecializedTemplate(
     return nullptr;
 
   for (unsigned i = 0; i < NumParams1; ++i)
-    if (param1[i] && param2[i])//TODO: write in from args
-      if (!Context.hasSameType(param1[i]->getType(),
-                               param2[i]->getType()))
-        return nullptr;
+    if (!Context.hasSameType(param1[i], param2[i]))
+      return nullptr;
 
   // C++20 [temp.func.order]p6.3:
   //   Otherwise, if the context in which the partial ordering is done is
