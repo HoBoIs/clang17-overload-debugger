@@ -9458,7 +9458,8 @@ public:
   FunctionTemplateDecl *getMoreSpecializedTemplate(
       FunctionTemplateDecl *FT1, FunctionTemplateDecl *FT2, SourceLocation Loc,
       TemplatePartialOrderingContext TPOC, unsigned NumCallArguments1,
-      unsigned NumCallArguments2, bool Reversed = false);
+      unsigned NumCallArguments2, QualType ObjType1={}, 
+      QualType ObjType2={}, bool Reversed = false);
   UnresolvedSetIterator
   getMostSpecialized(UnresolvedSetIterator SBegin, UnresolvedSetIterator SEnd,
                      TemplateSpecCandidateSet &FailedCandidates,

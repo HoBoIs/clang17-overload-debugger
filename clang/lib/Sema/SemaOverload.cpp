@@ -10516,12 +10516,16 @@ bool clang::isBetterOverloadCandidate(
   //      according to the partial ordering rules described in 14.5.5.2, or,
   //      if not that,
   if (Cand1IsSpecialization && Cand2IsSpecialization) {
+    auto* ObjContext1=dyn_cast<CXXRecordDecl>(Cand1.FoundDecl->getDeclContext());
+    auto* ObjContext2=dyn_cast<CXXRecordDecl>(Cand2.FoundDecl->getDeclContext());
     if (FunctionTemplateDecl *BetterTemplate = S.getMoreSpecializedTemplate(
             Cand1.Function->getPrimaryTemplate(),
             Cand2.Function->getPrimaryTemplate(), Loc,
             isa<CXXConversionDecl>(Cand1.Function) ? TPOC_Conversion
                                                    : TPOC_Call,
             Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
+            ObjContext1?QualType(ObjContext1->getTypeForDecl(),0):QualType{},
+            ObjContext2?QualType(ObjContext2->getTypeForDecl(),0):QualType{},
             Cand1.isReversed() ^ Cand2.isReversed())){
      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,
