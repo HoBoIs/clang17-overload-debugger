@@ -10516,23 +10516,26 @@ bool clang::isBetterOverloadCandidate(
   //      according to the partial ordering rules described in 14.5.5.2, or,
   //      if not that,
   if (Cand1IsSpecialization && Cand2IsSpecialization) {
-    auto* ObjContext1=dyn_cast<CXXRecordDecl>(Cand1.FoundDecl->getDeclContext());
-    auto* ObjContext2=dyn_cast<CXXRecordDecl>(Cand2.FoundDecl->getDeclContext());
+    const auto *Obj1Context =
+        dyn_cast<CXXRecordDecl>(Cand1.FoundDecl->getDeclContext());
+    const auto *Obj2Context =
+        dyn_cast<CXXRecordDecl>(Cand2.FoundDecl->getDeclContext());
     if (FunctionTemplateDecl *BetterTemplate = S.getMoreSpecializedTemplate(
             Cand1.Function->getPrimaryTemplate(),
             Cand2.Function->getPrimaryTemplate(), Loc,
             isa<CXXConversionDecl>(Cand1.Function) ? TPOC_Conversion
                                                    : TPOC_Call,
-            Cand1.ExplicitCallArguments, Cand2.ExplicitCallArguments,
-            ObjContext1?QualType(ObjContext1->getTypeForDecl(),0):QualType{},
-            ObjContext2?QualType(ObjContext2->getTypeForDecl(),0):QualType{},
-            Cand1.isReversed() ^ Cand2.isReversed())){
+            Cand1.ExplicitCallArguments,
+            Obj1Context ? QualType(Obj1Context->getTypeForDecl(), 0)
+                        : QualType{},
+            Obj2Context ? QualType(Obj2Context->getTypeForDecl(), 0)
+                        : QualType{},
+            Cand1.isReversed() ^ Cand2.isReversed())) {
      	if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
        	atCompareOverloadEnd(S.OverloadInspectionCallbacks,S,Loc,Cand1,Cand2,
           BetterTemplate==Cand1.Function->getPrimaryTemplate(),moreSpecialized);
-      return BetterTemplate==Cand1.Function->getPrimaryTemplate();
+      return BetterTemplate == Cand1.Function->getPrimaryTemplate();
     }
-
   }
 
   //   -— F1 and F2 are non-template functions with the same

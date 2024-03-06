@@ -219,8 +219,47 @@ Bug Fixes to C++ Support
   an empty template parameter lists.
 - Clang now classifies aggregate initialization in C++17 and newer as constant
   or non-constant more accurately. Previously, only a subset of the initializer
-  elements were considered, misclassifying some initializers as constant. Fixes
-  some of (`#80510 <https://github.com/llvm/llvm-project/issues/80510>`).
+  elements were considered, misclassifying some initializers as constant. Partially fixes
+  #GH80510.
+- Clang now ignores top-level cv-qualifiers on function parameters in template partial orderings. (#GH75404)
+- No longer reject valid use of the ``_Alignas`` specifier when declaring a
+  local variable, which is supported as a C11 extension in C++. Previously, it
+  was only accepted at namespace scope but not at local function scope.
+- Clang no longer tries to call consteval constructors at runtime when they appear in a member initializer. (#GH82154)
+- Fix crash when using an immediate-escalated function at global scope. (#GH82258)
+- Correctly immediate-escalate lambda conversion functions. (#GH82258)
+- Fixed an issue where template parameters of a nested abbreviated generic lambda within
+  a requires-clause lie at the same depth as those of the surrounding lambda. This,
+  in turn, results in the wrong template argument substitution during constraint checking.
+  (#GH78524)
+- Clang no longer instantiates the exception specification of discarded candidate function
+  templates when determining the primary template of an explicit specialization.
+- Fixed a crash in Microsoft compatibility mode where unqualified dependent base class
+  lookup searches the bases of an incomplete class.
+- Fix a crash when an unresolved overload set is encountered on the RHS of a ``.*`` operator.
+  (#GH53815)
+- In ``__restrict``-qualified member functions, attach ``__restrict`` to the pointer type of
+  ``this`` rather than the pointee type.
+  Fixes (#GH82941), (#GH42411) and (#GH18121).
+- Clang now properly reports supported C++11 attributes when using
+  ``__has_cpp_attribute`` and parses attributes with arguments in C++03 (#GH82995)
+- Clang now properly diagnoses missing 'default' template arguments on a variety
+  of templates. Previously we were diagnosing on any non-function template
+  instead of only on class, alias, and variable templates, as last updated by
+  CWG2032. Fixes (#GH83461)
+- Fixed an issue where an attribute on a declarator would cause the attribute to
+  be destructed prematurely. This fixes a pair of Chromium that were brought to
+  our attention by an attempt to fix in (#GH77703). Fixes (#GH83385).
+- Fix evaluation of some immediate calls in default arguments.
+  Fixes (#GH80630)
+- Fix a crash when an explicit template argument list is used with a name for which lookup
+  finds a non-template function and a dependent using declarator.
+- Fix a bug where overload resolution falsely reported an ambiguity when it was comparing
+  a member-function against a non member function or a member-function with an
+  explicit object parameter against a member function with no explicit object parameter
+  when one of the function had more specialized templates.
+  Fixes (`#82509 <https://github.com/llvm/llvm-project/issues/82509>`_)
+  and (`#74494 <https://github.com/llvm/llvm-project/issues/74494>`_)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
