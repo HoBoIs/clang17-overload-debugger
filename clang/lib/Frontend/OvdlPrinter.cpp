@@ -1378,6 +1378,8 @@ private:
   OvInsSource getTemplateSrc(const FunctionDecl *f) const {
     llvm::SmallVector<const Expr *> AC;
     SourceRange r = f->getDescribedFunctionTemplate()->getSourceRange();
+    if (r.getBegin().isInvalid())
+      r.setBegin(f->getBeginLoc());
     r.setEnd(f->getTypeSpecEndLoc());
     const auto *t = f->getDescribedTemplate();
     SourceLocation l0;
@@ -1423,7 +1425,7 @@ private:
     if (C.Function == nullptr)
       return {};
     if (C.Function && isa<CXXMethodDecl>(C.Function) &&
-        !isa<CXXConstructorDecl>(C.Function))
+        !isa<CXXConstructorDecl>(C.Function) && !llvm::dyn_cast<CXXMethodDecl>(C.Function)->isExplicitObjectMemberFunction())
       --i;
     const NamedDecl *nd = C.FoundDecl.getDecl();
     while (isa<UsingShadowDecl>(nd))
@@ -1463,7 +1465,7 @@ private:
       return {};
     std::vector<std::tuple<QualType, bool>> res;
     QualType thisType = getThisType(C);
-    if (thisType != QualType{})
+    if (thisType != QualType{}&& !llvm::dyn_cast<CXXMethodDecl>(C.Function)->isExplicitObjectMemberFunction())
       res.emplace_back(std::tuple{thisType, false});
     if (!C.Function->param_empty())
       for (size_t i = 0; i != C.Function->param_size(); ++i) {
@@ -1478,7 +1480,7 @@ private:
     // llvm::raw_string_ostream os(res);
     const auto types = getSignatureTypes(C);
     size_t i = 0;
-    if (getThisType(C) != QualType{}) {
+    if (getThisType(C) != QualType{} && !llvm::dyn_cast<CXXMethodDecl>(C.Function)->isExplicitObjectMemberFunction()) {
       res.push_back(getThisType(C).getCanonicalType().getAsString() + "=this");
       ++i;
     }
@@ -1493,8 +1495,12 @@ private:
   }
   std::vector<ExprValueKind> getCallKinds() const {
     std::vector<ExprValueKind> res;
-    if (const Expr *Oe = getSetArgs().ObjectExpr)
-      res.push_back(Oe->getValueKind());
+    if (const Expr *Oe = getSetArgs().ObjectExpr){
+      if (const auto *unresObjExpr = dyn_cast<UnresolvedMemberExpr>(Oe)) 
+        res.push_back(unresObjExpr->getBase()->getValueKind());
+      else
+        res.push_back(Oe->getValueKind());
+    }
     auto Args = getSetArgs().inArgs;
     /*if (Args.size()==1&&isa<clang::InitListExpr>(Args[0])){
       Args = llvm::dyn_cast<const clang::InitListExpr>(Args[0])->inits();
