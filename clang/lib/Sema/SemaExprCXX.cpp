@@ -2530,7 +2530,9 @@ static bool resolveAllocationOverload(
   OverloadCandidateSet Candidates(R.getNameLoc(),
                                   OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-    addSetInfo(S.OverloadInspectionCallbacks, Candidates,{Args,Range.getEnd()});
+    addSetInfo(S.OverloadInspectionCallbacks, Candidates,
+               {R.getLookupName().getAsString()+"3",Args,Range.getEnd()});
+  //R.getLookupName();
   for (LookupResult::iterator Alloc = R.begin(), AllocEnd = R.end();
        Alloc != AllocEnd; ++Alloc) {
     // Even member operator new/delete are implicitly treated as
@@ -3865,7 +3867,9 @@ static bool resolveBuiltinNewDeleteOverload(Sema &S, CallExpr *TheCall,
   OverloadCandidateSet Candidates(R.getNameLoc(),
                                   OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(S.OverloadInspectionCallbacks, Candidates, {Args,TheCall->getEndLoc()});
+      addSetInfo(S.OverloadInspectionCallbacks, Candidates, 
+                 {NewName.getAsString()+"4",Args,TheCall->getEndLoc()});
+  //NewName
   for (LookupResult::iterator FnOvl = R.begin(), FnOvlEnd = R.end();
        FnOvl != FnOvlEnd; ++FnOvl) {
     // Even member operator new/delete are implicitly treated as
@@ -6319,7 +6323,8 @@ static bool FindConditionalOverload(Sema &Self, ExprResult &LHS, ExprResult &RHS
   OverloadCandidateSet CandidateSet(QuestionLoc,
                                     OverloadCandidateSet::CSK_Operator);
   if (LLVM_UNLIKELY(!Self.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-      addSetInfo(Self.OverloadInspectionCallbacks, CandidateSet, {Args});
+      addSetInfo(Self.OverloadInspectionCallbacks, CandidateSet, {"?",Args});
+  //"?"
   Self.AddBuiltinOperatorCandidates(OO_Conditional, QuestionLoc, Args,
                                     CandidateSet);
 

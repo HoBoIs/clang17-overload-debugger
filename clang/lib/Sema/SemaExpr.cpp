@@ -2502,7 +2502,9 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
         OverloadCandidateSet Candidates(R.getNameLoc(),
                                         OverloadCandidateSet::CSK_Normal);
         if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
-          addSetInfo(OverloadInspectionCallbacks, Candidates, {Args});
+          addSetInfo(OverloadInspectionCallbacks, Candidates, 
+                     {R.getLookupName().getAsString()+"1",Args});
+        //R.getLookupName();
         AddOverloadedCallCandidates(R, ExplicitTemplateArgs, Args, Candidates);
         OverloadCandidateSet::iterator Best;
         if (Candidates.BestViableFunction(*this, R.getNameLoc(), Best) ==
@@ -2552,7 +2554,8 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
         OverloadCandidateSet OCS(R.getNameLoc(),
                                  OverloadCandidateSet::CSK_Normal);
         if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
-          addSetInfo(OverloadInspectionCallbacks, OCS, {Args});
+          addSetInfo(OverloadInspectionCallbacks, OCS, {R.getLookupName().getAsString()+"2",Args});
+        //Typo correction
         OverloadCandidateSet::iterator Best;
         for (NamedDecl *CD : Corrected) {
           if (FunctionTemplateDecl *FTD =

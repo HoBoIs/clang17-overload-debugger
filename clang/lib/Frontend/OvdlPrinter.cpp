@@ -9,12 +9,14 @@
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Timer.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <chrono>
 #include <deque>
 #include <iterator>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -113,7 +115,7 @@ struct OvInsCompareEntry {
   std::vector<OvInsConvCmpEntry> conversionCompares;
   long passedTime;
   BetterOverloadCandidateReason reason;
-  bool C1Better;
+bool C1Better;
   bool operator==(const OvInsCompareEntry &o) const {
     return C1 == o.C1 && C2 == o.C2 && reason == o.reason &&
            C1Better == o.C1Better && deciderConversion == o.deciderConversion &&
@@ -370,10 +372,13 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     SourceLocation Loc = {};
     bool valid = false;
     bool isImplicit = false;
+    std::string name="";
   };
   std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
   std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
+  llvm::TimerGroup TG{"name","desc"};
+  std::map<std::string,std::shared_ptr<llvm::Timer>> timers;
 
 public:
   virtual void addSetInfo(const OverloadCandidateSet &Set,
@@ -398,6 +403,20 @@ public:
     SetArgMap[&Set].Loc = Set.getLocation();
     if (S.isImplicit)
       SetArgMap[&Set].isImplicit = *S.isImplicit;
+    if (S.name)
+      SetArgMap[&Set].name=*S.name;
+    if (SetArgMap[&Set].name!=""){
+      if (0 == timers.count(SetArgMap[&Set].name)){
+        timers[SetArgMap[&Set].name]=std::move(std::make_shared<llvm::Timer>(SetArgMap[&Set].name,SetArgMap[&Set].name,TG));
+      }
+      if (SetArgMap[&Set].isImplicit)
+        llvm::errs()<<"imp"<<SetArgMap[&Set].name<<"\n";
+      else if (!timers[SetArgMap[&Set].name]->isRunning()){
+        llvm::errs()<<"STARTING "<<&Set<<" "<<SetArgMap[&Set].name<<"\n";
+        timers[SetArgMap[&Set].name]->startTimer();
+      }else
+        llvm::errs()<<"RUNING "<<&Set<<" "<<SetArgMap[&Set].name<<"\n";
+    }
   };
   virtual bool needAllCompareInfo() const override {
     return settings.ShowConversions == clang::FrontendOptions::SC_Verbose &&
@@ -420,6 +439,13 @@ public:
     } else
       printHumanReadable();
     cont = {};
+    for (auto& t:timers){
+      if (t.second->isRunning())
+        t.second->clear();
+    }
+    TG.printAll(llvm::outs());
+    TG.clear();
+    timers={};
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
                                const OverloadCandidateSet &set) override {
@@ -461,6 +487,14 @@ public:
                              const OverloadCandidateSet &set,
                              OverloadingResult ovRes,
                              const OverloadCandidate *BestOrProblem) override {
+    if (SetArgMap.count(&set) && getSetArgs().name!=""){
+      if (!timers[getSetArgs().name]->isRunning())
+        llvm::errs()<<"NOT RUNING"<<getSetArgs().name;
+      else{
+        llvm::errs()<<" "<<getSetArgs().name<<"-\n";
+        timers[getSetArgs().name]->stopTimer();
+      }
+    }
     if (!inBestOC)
       return;
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
