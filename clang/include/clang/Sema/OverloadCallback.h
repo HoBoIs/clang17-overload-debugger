@@ -39,7 +39,16 @@ public:
     const OverloadCandidate &Cand1, const OverloadCandidate &Cand2)=0;
   virtual void atCompareOverloadEnd(const Sema& TheSema,const SourceLocation& Loc,
     const OverloadCandidate &Cand1, const OverloadCandidate &Cand2, bool res,BetterOverloadCandidateReason reason,int infoIdx)=0;
+  virtual void atOCSDestruct(const OverloadCandidateSet* s)=0;
 };
+
+template <class OverloadCallbackPtrs>
+void destructOCS(OverloadCallbackPtrs &Callbacks,const OverloadCandidateSet* Set){
+  for (auto &C : Callbacks) 
+    if (C)
+      C->atOCSDestruct(Set);
+}
+
 
 template <class OverloadCallbackPtrs>
 void addSetInfo(OverloadCallbackPtrs &Callbacks,const OverloadCandidateSet& Set,

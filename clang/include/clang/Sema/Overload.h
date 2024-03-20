@@ -1052,7 +1052,7 @@ class Sema;
     // Allocator for ConversionSequenceLists. We store the first few of these
     // inline to avoid allocation for small sets.
     llvm::BumpPtrAllocator SlabAllocator;
-
+    Sema& S;
     SourceLocation Loc;
     CandidateSetKind Kind;
     OperatorRewriteInfo RewriteInfo;
@@ -1094,15 +1094,16 @@ class Sema;
     void destroyCandidates();
 
   public:
+    const Sema& getSema()const {return S;}
     OverloadCandidateSet(Sema& S, SourceLocation Loc, CandidateSetKind CSK,
                          OperatorRewriteInfo RewriteInfo = {})
-        : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}
-    OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
-                         OperatorRewriteInfo RewriteInfo = {})
-        : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}
+        :S(S), Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}
+    //OverloadCandidateSet(SourceLocation Loc, CandidateSetKind CSK,
+    //                     OperatorRewriteInfo RewriteInfo = {})
+    //    : Loc(Loc), Kind(CSK), RewriteInfo(RewriteInfo) {}
     OverloadCandidateSet(const OverloadCandidateSet &) = delete;
     OverloadCandidateSet &operator=(const OverloadCandidateSet &) = delete;
-    ~OverloadCandidateSet() { destroyCandidates(); }
+    ~OverloadCandidateSet();
 
     SourceLocation getLocation() const { return Loc; }
     CandidateSetKind getKind() const { return Kind; }

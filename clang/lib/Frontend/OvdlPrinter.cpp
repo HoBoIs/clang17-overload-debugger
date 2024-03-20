@@ -379,43 +379,46 @@ class DefaultOverloadInstCallback : public OverloadCallback {
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
   llvm::TimerGroup TG{"name","desc"};
   std::map<std::string,std::shared_ptr<llvm::Timer>> timers;
+  std::map<std::string,const OverloadCandidateSet*> timerPtrs;
 
 public:
   virtual void addSetInfo(const OverloadCandidateSet &Set,
                           const SetInfo &S) override {
     SetArgMap[&Set].Set = &Set;
-    if (SetArgMap[&Set].valid && SetArgMap[&Set].Loc != Set.getLocation()) {
-      SetArgMap[&Set] = {}; // Reset because the info is outdated
-      SetArgMap[&Set].Set = &Set;
+    auto& args=SetArgMap[&Set];
+    if (args.valid && args.Loc != Set.getLocation()) {
+      args = {}; // Reset because the info is outdated
+      args.Set = &Set;
     }
-    SetArgMap[&Set].valid = true;
+    args.valid = true;
     if (S.Args)
-      SetArgMap[&Set].inArgs = llvm::SmallVector<Expr *>(*S.Args);
+      args.inArgs = llvm::SmallVector<Expr *>(*S.Args);
     if (S.Args->size() == 1 && (*S.Args)[0] == nullptr) {
       // NEVER any more?
       // assert(0);
-      SetArgMap[&Set].inArgs = llvm::SmallVector<Expr *>();
+      args.inArgs = llvm::SmallVector<Expr *>();
     }
     if (S.ObjectExpr)
-      SetArgMap[&Set].ObjectExpr = *S.ObjectExpr;
+      args.ObjectExpr = *S.ObjectExpr;
     if (S.EndLoc)
-      SetArgMap[&Set].EndLoc = *S.EndLoc;
-    SetArgMap[&Set].Loc = Set.getLocation();
+      args.EndLoc = *S.EndLoc;
+    args.Loc = Set.getLocation();
     if (S.isImplicit)
-      SetArgMap[&Set].isImplicit = *S.isImplicit;
+      args.isImplicit = *S.isImplicit;
     if (S.name)
-      SetArgMap[&Set].name=*S.name;
-    if (SetArgMap[&Set].name!=""){
-      if (0 == timers.count(SetArgMap[&Set].name)){
-        timers[SetArgMap[&Set].name]=std::move(std::make_shared<llvm::Timer>(SetArgMap[&Set].name,SetArgMap[&Set].name,TG));
+      args.name=*S.name;
+    if (args.isImplicit && args.name[0]!='$')
+       args.name="$ "+args.name+"imp";
+    if (args.name!=""){
+      if (0 == timers.count(args.name)){
+        timers[args.name]=std::move(std::make_shared<llvm::Timer>(args.name,args.name,TG));
       }
-      if (SetArgMap[&Set].isImplicit)
-        llvm::errs()<<"imp"<<SetArgMap[&Set].name<<"\n";
-      else if (!timers[SetArgMap[&Set].name]->isRunning()){
-        llvm::errs()<<"STARTING "<<&Set<<" "<<SetArgMap[&Set].name<<"\n";
-        timers[SetArgMap[&Set].name]->startTimer();
-      }else
-        llvm::errs()<<"RUNING "<<&Set<<" "<<SetArgMap[&Set].name<<"\n";
+      if (!timers[args.name]->isRunning()){
+        timerPtrs[args.name]=&Set;
+        //llvm::errs()<<"STARTING "<<&Set<<" "<<args.name<<"\n";
+        timers[args.name]->startTimer();
+      }else if (timerPtrs[args.name]!=&Set)
+        llvm::errs()<<"RUNING "<<&Set<<" "<<args.name<<"\n";
     }
   };
   virtual bool needAllCompareInfo() const override {
@@ -429,7 +432,29 @@ public:
   void setSettings(const clang::FrontendOptions::OvInsSettingsType &s) {
     settings = s;
   }
-  virtual void initialize(const Sema &) override{};
+  size_t cnt_=0;
+  virtual void atOCSDestruct(const OverloadCandidateSet* s) override {
+    S=&s->getSema();
+    if (cnt_ < SetArgMap.size()){
+      cnt_ = SetArgMap.size();
+      const auto& x = SetArgMap;
+      for (const auto& [k,v]:x){
+        PresumedLoc L;
+        if (!v.Loc.isInvalid())
+          L=S->getSourceManager().getPresumedLoc(v.Loc);
+        llvm::errs()<<k<<" "<<v.name<<" "<<L.getFilename()<<" "<<L.getLine()<<" "<<L.getColumn()<<"\n";
+      }
+      llvm::errs()<<"\n";
+    }
+    if (SetArgMap[s].name!=""){
+      auto& t=timers[SetArgMap[s].name];
+      if (t->isRunning())
+        t->stopTimer();
+        //t->clear();
+    }
+    SetArgMap.erase(s);
+  }
+  virtual void initialize(const Sema & s) override{};
   virtual void finalize(const Sema &) override{};
   virtual void atEnd() override {
     if (settings.PrintYAML) {
@@ -440,12 +465,13 @@ public:
       printHumanReadable();
     cont = {};
     for (auto& t:timers){
-      if (t.second->isRunning())
+      if (0 and t.second->isRunning())
         t.second->clear();
     }
     TG.printAll(llvm::outs());
     TG.clear();
     timers={};
+    llvm::errs()<<" "<<SetArgMap.size()<<" "<<cnt_<<"=CNT\n";
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
                                const OverloadCandidateSet &set) override {
@@ -489,10 +515,10 @@ public:
                              const OverloadCandidate *BestOrProblem) override {
     if (SetArgMap.count(&set) && getSetArgs().name!=""){
       if (!timers[getSetArgs().name]->isRunning())
-        llvm::errs()<<"NOT RUNING"<<getSetArgs().name;
+        llvm::errs()<<"NOT RUNING"<<getSetArgs().name<<"\n";
       else{
-        llvm::errs()<<" "<<getSetArgs().name<<"-\n";
-        timers[getSetArgs().name]->stopTimer();
+        //llvm::errs()<<" "<<getSetArgs().name<<"-\n";
+        //timers[getSetArgs().name]->stopTimer();
       }
     }
     if (!inBestOC)

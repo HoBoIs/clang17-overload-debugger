@@ -2924,7 +2924,7 @@ StmtResult Sema::BuildCXXForRangeStmt(
         return StmtError();
       }
     } else {
-      OverloadCandidateSet CandidateSet(RangeLoc,
+      OverloadCandidateSet CandidateSet(*this, RangeLoc,
                                         OverloadCandidateSet::CSK_Normal);
       //if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
       //  addSetInfo(OverloadInspectionCallbacks, CandidateSet, {});

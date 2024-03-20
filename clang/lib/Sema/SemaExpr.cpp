@@ -2499,7 +2499,7 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
 
         // If there's a best viable function among the results, only mention
         // that one in the notes.
-        OverloadCandidateSet Candidates(R.getNameLoc(),
+        OverloadCandidateSet Candidates(*this, R.getNameLoc(),
                                         OverloadCandidateSet::CSK_Normal);
         if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
           addSetInfo(OverloadInspectionCallbacks, Candidates, 
@@ -2551,7 +2551,7 @@ bool Sema::DiagnoseEmptyLookup(Scope *S, CXXScopeSpec &SS, LookupResult &R,
     NamedDecl *ND = Corrected.getFoundDecl();
     if (ND) {
       if (Corrected.isOverloaded()) {
-        OverloadCandidateSet OCS(R.getNameLoc(),
+        OverloadCandidateSet OCS(*this, R.getNameLoc(),
                                  OverloadCandidateSet::CSK_Normal);
         if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
           addSetInfo(OverloadInspectionCallbacks, OCS, {R.getLookupName().getAsString()+"2",Args});
@@ -6517,7 +6517,7 @@ static TypoCorrection TryTypoCorrectionForCall(Sema &S, Expr *Fn,
           Sema::CTK_ErrorRecovery)) {
     if (NamedDecl *ND = Corrected.getFoundDecl()) {
       if (Corrected.isOverloaded()) {
-        OverloadCandidateSet OCS(NameLoc, OverloadCandidateSet::CSK_Normal);
+        OverloadCandidateSet OCS(S,NameLoc, OverloadCandidateSet::CSK_Normal);
         //if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
         //  addSetInfo(S.OverloadInspectionCallbacks, OCS, Args);
         OverloadCandidateSet::iterator Best;

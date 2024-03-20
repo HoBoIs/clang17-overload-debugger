@@ -2527,7 +2527,7 @@ static bool resolveAllocationOverload(
     Sema &S, LookupResult &R, SourceRange Range, SmallVectorImpl<Expr *> &Args,
     bool &PassAlignment, FunctionDecl *&Operator,
     OverloadCandidateSet *AlignedCandidates, Expr *AlignArg, bool Diagnose) {
-  OverloadCandidateSet Candidates(R.getNameLoc(),
+  OverloadCandidateSet Candidates(S,R.getNameLoc(),
                                   OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
     addSetInfo(S.OverloadInspectionCallbacks, Candidates,
@@ -3864,7 +3864,7 @@ static bool resolveBuiltinNewDeleteOverload(Sema &S, CallExpr *TheCall,
   R.suppressDiagnostics();
 
   SmallVector<Expr *, 8> Args(TheCall->arguments());
-  OverloadCandidateSet Candidates(R.getNameLoc(),
+  OverloadCandidateSet Candidates(S,R.getNameLoc(),
                                   OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
       addSetInfo(S.OverloadInspectionCallbacks, Candidates, 
@@ -6320,7 +6320,7 @@ static bool TryClassUnification(Sema &Self, Expr *From, Expr *To,
 static bool FindConditionalOverload(Sema &Self, ExprResult &LHS, ExprResult &RHS,
                                     SourceLocation QuestionLoc) {
   Expr *Args[2] = { LHS.get(), RHS.get() };
-  OverloadCandidateSet CandidateSet(QuestionLoc,
+  OverloadCandidateSet CandidateSet(Self,QuestionLoc,
                                     OverloadCandidateSet::CSK_Operator);
   if (LLVM_UNLIKELY(!Self.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
       addSetInfo(Self.OverloadInspectionCallbacks, CandidateSet, {"?",Args});

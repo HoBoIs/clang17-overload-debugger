@@ -6095,7 +6095,7 @@ InitializationSequence::InitializationSequence(
     Sema &S, const InitializedEntity &Entity, const InitializationKind &Kind,
     MultiExprArg Args, bool TopLevelOfInitList, bool TreatUnavailableAsInvalid)
     : FailedOverloadResult(OR_Success),
-      FailedCandidateSet(Kind.getLocation(), OverloadCandidateSet::CSK_Normal) {
+      FailedCandidateSet(S,Kind.getLocation(), OverloadCandidateSet::CSK_Normal) {
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
     addSetInfo(S.OverloadInspectionCallbacks, FailedCandidateSet, 
               {Entity.getType().getAsString()+"6", Args, Kind.getRange().getEnd()});
@@ -6413,6 +6413,7 @@ void InitializationSequence::InitializeFrom(Sema &S,
          (Context.hasSameUnqualifiedType(SourceType, DestType) ||
           (Initializer && S.IsDerivedFrom(Initializer->getBeginLoc(),
                                           SourceType, DestType))))) {
+      llvm::errs()<<"-";
       TryConstructorInitialization(S, Entity, Kind, Args, DestType, DestType,
                                    *this);
 
@@ -6450,6 +6451,7 @@ void InitializationSequence::InitializeFrom(Sema &S,
         }
       }
     } else {
+      llvm::errs()<<"+";
       //     - Otherwise (i.e., for the remaining copy-initialization cases),
       //       user-defined conversion sequences that can convert from the
       //       source type to the destination type or (when a conversion
@@ -6606,7 +6608,6 @@ void InitializationSequence::InitializeFrom(Sema &S,
 }
 
 InitializationSequence::~InitializationSequence() {
-  llvm::errs()<<"DSTR";
   for (auto &S : Steps)
     S.Destroy();
 }
@@ -6819,7 +6820,7 @@ static ExprResult CopyObject(Sema &S,
   // Perform overload resolution using the class's constructors. Per
   // C++11 [dcl.init]p16, second bullet for class types, this initialization
   // is direct-initialization.
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
+  OverloadCandidateSet CandidateSet(S,Loc, OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))
     addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, {T.getAsString(), CurInitExpr});
   DeclContext::lookup_result Ctors = S.LookupConstructors(Class);
@@ -6962,7 +6963,7 @@ static void CheckCXX98CompatAccessibleCopy(Sema &S,
     return;
 
   // Find constructors which would have been considered.
-  OverloadCandidateSet CandidateSet(Loc, OverloadCandidateSet::CSK_Normal);
+  OverloadCandidateSet CandidateSet(S,Loc, OverloadCandidateSet::CSK_Normal);
   //if (LLVM_UNLIKELY(!S.OverloadInspectionCallbacks.empty()))//TODO:MaybeRemove
   //  addSetInfo(S.OverloadInspectionCallbacks, CandidateSet, CurInitExpr);
   DeclContext::lookup_result Ctors =
@@ -10703,7 +10704,7 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
   //
   // Since we know we're initializing a class type of a type unrelated to that
   // of the initializer, this reduces to something fairly reasonable.
-  OverloadCandidateSet Candidates(Kind.getLocation(),
+  OverloadCandidateSet Candidates(*this,Kind.getLocation(),
                                   OverloadCandidateSet::CSK_Normal);
   if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
     addSetInfo(OverloadInspectionCallbacks, Candidates, 
