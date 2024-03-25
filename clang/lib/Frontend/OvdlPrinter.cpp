@@ -374,13 +374,23 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     bool isImplicit = false;
     std::string name="";
   };
+  struct timeInfo{
+    const OverloadCandidateSet* ocs;
+    std::string name;
+    llvm::TimeRecord startTime;
+    llvm::TimeRecord Time;
+    llvm::TimeRecord childTime;
+    bool isDisplayed=false;
+  };
   std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
   std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
-  llvm::TimerGroup TG{"name","desc"};
-  std::map<std::string,std::shared_ptr<llvm::Timer>> timers;
-  std::map<std::string,const OverloadCandidateSet*> timerPtrs;
-
+  //llvm::TimerGroup TG{"name","desc"};
+  std::vector<timeInfo*> timeStack, dispayedTimes;
+  //std::vector<std::shared_ptr<llvm::Timer>> timerStack;
+  //std::vector<std::shared_ptr<llvm::Timer>> keptTimers;//TODO: merge them by name
+  //std::map<const OverloadCandidateSet*, std::shared_ptr<llvm::Timer>> timers;
+  //std::map<std::string,const OverloadCandidateSet*> timerPtrs;
 public:
   virtual void addSetInfo(const OverloadCandidateSet &Set,
                           const SetInfo &S) override {
@@ -409,17 +419,22 @@ public:
       args.name=*S.name;
     if (args.isImplicit && args.name[0]!='$')
        args.name="$ "+args.name+"imp";
-    if (args.name!=""){
-      if (0 == timers.count(args.name)){
-        timers[args.name]=std::move(std::make_shared<llvm::Timer>(args.name,args.name,TG));
-      }
-      if (!timers[args.name]->isRunning()){
-        timerPtrs[args.name]=&Set;
-        //llvm::errs()<<"STARTING "<<&Set<<" "<<args.name<<"\n";
-        timers[args.name]->startTimer();
-      }else if (timerPtrs[args.name]!=&Set)
-        llvm::errs()<<"RUNING "<<&Set<<" "<<args.name<<"\n";
+    if (timeStack.empty() || timeStack.back()->ocs != &Set){
+      timeInfo* ti=new timeInfo{&Set,args.name,llvm::TimeRecord::getCurrentTime()};
+      timeStack.push_back(ti);
     }
+    /*if (args.name!=""){
+      if (0 == timers.count(&Set)){
+        timers[&Set]=std::move(new llvm::Timer(args.name,args.name,TG));
+      }
+      if (!timers[&Set]->isRunning()){
+        //timerPtrs[args.name]=&Set;
+        //llvm::errs()<<"STARTING "<<&Set<<" "<<args.name<<"\n";
+        timers[&Set]->startTimer();
+      }
+      //else if (timerPtrs[args.name]!=&Set)
+      //  llvm::errs()<<"RUNING "<<&Set<<" "<<args.name<<"\n";
+    }*/
   };
   virtual bool needAllCompareInfo() const override {
     return settings.ShowConversions == clang::FrontendOptions::SC_Verbose &&
@@ -446,12 +461,27 @@ public:
       }
       llvm::errs()<<"\n";
     }
-    if (SetArgMap[s].name!=""){
-      auto& t=timers[SetArgMap[s].name];
+    if (timeStack.empty() || timeStack.back()->ocs!=s)
+      return;
+    //assert(timeStack.back()->ocs==s && "NOT TOP");
+    if (timeStack.back()->ocs==s){
+      timeStack.back()->Time+=llvm::TimeRecord::getCurrentTime(false);
+      if (timeStack.size()>1){
+        timeStack[timeStack.size()-2]->childTime+=timeStack.back()->Time;
+      }
+      if (!timeStack.back()->isDisplayed) {
+        delete timeStack.back();
+      }
+      timeStack.pop_back();
+    }
+    /*if (timers.count(s)){
+      auto& t=timers[s];
       if (t->isRunning())
         t->stopTimer();
+      timers.erase(s);
+      //t->clear();
         //t->clear();
-    }
+    }*/
     SetArgMap.erase(s);
   }
   virtual void initialize(const Sema & s) override{};
@@ -464,13 +494,11 @@ public:
     } else
       printHumanReadable();
     cont = {};
-    for (auto& t:timers){
-      if (0 and t.second->isRunning())
-        t.second->clear();
+    for (auto& t:dispayedTimes){
+      //TODO: print
+      delete t;
     }
-    TG.printAll(llvm::outs());
-    TG.clear();
-    timers={};
+    dispayedTimes={};
     llvm::errs()<<" "<<SetArgMap.size()<<" "<<cnt_<<"=CNT\n";
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
@@ -513,16 +541,25 @@ public:
                              const OverloadCandidateSet &set,
                              OverloadingResult ovRes,
                              const OverloadCandidate *BestOrProblem) override {
-    if (SetArgMap.count(&set) && getSetArgs().name!=""){
-      if (!timers[getSetArgs().name]->isRunning())
+    /*if (SetArgMap.count(&set) && timers.count(&set)){
+      if (!timers[&set]->isRunning())
         llvm::errs()<<"NOT RUNING"<<getSetArgs().name<<"\n";
       else{
         //llvm::errs()<<" "<<getSetArgs().name<<"-\n";
         //timers[getSetArgs().name]->stopTimer();
       }
-    }
-    if (!inBestOC)
+    }*/
+    if (!inBestOC){
+      //if (timers.count(&set))
+      //  timers[&set]->clear();
       return;
+    }
+    assert(&set == timeStack.back()->ocs);
+    if (! timeStack.back()->isDisplayed){
+      timeStack.back()->isDisplayed=true;
+      dispayedTimes.push_back(timeStack.back());
+    }
+    //time
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)
       ovEndTime = std::chrono::steady_clock().now();
@@ -1145,8 +1182,10 @@ private:
     return res;
   };
   OvInsSource getConversionSource(const SetArgs &setArg, int idx) const {
-    if (idx >= 0)
-      return getSrcFromExpr(setArg.inArgs[idx]);
+    if (idx >= 0){
+      llvm::errs()<<idx<<" "<<setArg.inArgs.size()<<"\n";
+      return getSrcFromExpr(setArg.inArgs[idx]);//ERROR index
+    }
     if (const auto *objExpr = setArg.ObjectExpr) {
       if (const auto *unresObjExpr = dyn_cast<UnresolvedMemberExpr>(objExpr)) {
         if (unresObjExpr->isImplicitAccess())
@@ -1165,6 +1204,11 @@ private:
     const SetArgs &setArg = getSetArgs();
     bool isStaticCall = setArg.ObjectExpr == nullptr && C.IgnoreObjectArgument;
     //if (C.Function && C.Function){isStaticCall=true;}
+    llvm::errs()<<C.ExplicitCallArguments<<"=ECA "<<C.Conversions.size()<<" "<<Loc.printToString(S->getSourceManager())<<" "<<isStaticCall<<"\n";
+    llvm::errs()<<setArg.ObjectExpr <<" "<< C.IgnoreObjectArgument<<" "<<
+      //setArg.Loc.printToString(S->getSourceManager())
+      (C.Function?C.Function->getSourceRange().printToString(S->getSourceManager()):"")
+      <<"\n";
     for (size_t i = 0; i < C.Conversions.size(); ++i) {
       const ExprValueKind fromKind =
           (callKinds.size() > i - isStaticCall)
@@ -1180,9 +1224,10 @@ private:
         }
         if (!isDeduceThis)
           if ((C.Function && isa<CXXMethodDecl>(C.Function) &&
-              !isa<CXXConstructorDecl>(C.Function) && setArg.ObjectExpr) ||
+              !isa<CXXConstructorDecl>(C.Function) /*&& setArg.ObjectExpr*/) ||
               C.IsSurrogate)
             --inArgsIdx;
+        llvm::errs()<<isDeduceThis<<"=IDD";
         actual.src = getConversionSource(setArg, inArgsIdx-isDeduceThis);
       }
       if (!conv.isInitialized()) {
@@ -1556,9 +1601,12 @@ private:
   std::vector<ExprValueKind> getCallKinds() const {
     std::vector<ExprValueKind> res;
     if (const Expr *Oe = getSetArgs().ObjectExpr){
-      if (const auto *unresObjExpr = dyn_cast<UnresolvedMemberExpr>(Oe)) 
-        res.push_back(unresObjExpr->getBase()->getValueKind());
-      else
+      if (const auto *unresObjExpr = dyn_cast<UnresolvedMemberExpr>(Oe)) {
+        if (unresObjExpr->isImplicitAccess())
+          res.push_back(unresObjExpr->getValueKind());//???
+        else
+          res.push_back(unresObjExpr->getBase()->getValueKind());
+      } else
         res.push_back(Oe->getValueKind());
     }
     auto Args = getSetArgs().inArgs;
