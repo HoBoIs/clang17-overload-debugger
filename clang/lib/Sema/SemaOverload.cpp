@@ -14386,7 +14386,8 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, UnaryOperatorKind Opc,
   // Build an empty overload set.
   OverloadCandidateSet CandidateSet(*this, OpLoc, OverloadCandidateSet::CSK_Operator);
   if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
-      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {"OP",ArgsArray});
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {OpName.getAsString(),ArgsArray});
+    //getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
   //OpName(Op or Opc)
 
   // Add the candidates from the given function set.
@@ -14686,7 +14687,9 @@ ExprResult Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
                           OverloadCandidateSet::OperatorRewriteInfo(
                             Op, OpLoc, AllowRewrittenCandidates));//???
   if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
-      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {"OP",Args});
+      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {
+          getOperatorSpelling(Op),Args});
+    //getOperatorSpelling(Set->getRewriteInfo().OriginalOperator);
   //spelling of Opc
   if (DefaultedFn)
     CandidateSet.exclude(DefaultedFn);
@@ -15741,10 +15744,10 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   //  (E).operator().
   OverloadCandidateSet CandidateSet(*this,LParenLoc,
                                     OverloadCandidateSet::CSK_Operator);
-  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
-      addSetInfo(OverloadInspectionCallbacks, CandidateSet, {"()",Args,RParenLoc,Obj});
-  //FIXME :Typename
   DeclarationName OpName = Context.DeclarationNames.getCXXOperatorName(OO_Call);
+  if (LLVM_UNLIKELY(!OverloadInspectionCallbacks.empty()))
+    addSetInfo(OverloadInspectionCallbacks, CandidateSet, {OpName.getAsString(),Args,RParenLoc,Obj});
+  //FIXME :Typename
 
   if (RequireCompleteType(LParenLoc, Object.get()->getType(),
                           diag::err_incomplete_object_call, Object.get()))

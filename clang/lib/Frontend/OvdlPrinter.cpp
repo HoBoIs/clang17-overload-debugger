@@ -382,11 +382,21 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     llvm::TimeRecord childTime;
     bool isDisplayed=false;
   };
+  struct sumTimeInfo{
+    llvm::TimeRecord Time;
+    llvm::TimeRecord childTime;
+    sumTimeInfo& operator+=(const timeInfo& ti){
+      Time += ti.Time;
+      childTime += ti.childTime;
+      return *this;
+    }
+  };
   std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
   std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
   //llvm::TimerGroup TG{"name","desc"};
-  std::vector<timeInfo*> timeStack, dispayedTimes;
+  std::vector<timeInfo*> timeStack;//TODO make it not ptr
+  std::map<std::string,sumTimeInfo> timeMap;
   //std::vector<std::shared_ptr<llvm::Timer>> timerStack;
   //std::vector<std::shared_ptr<llvm::Timer>> keptTimers;//TODO: merge them by name
   //std::map<const OverloadCandidateSet*, std::shared_ptr<llvm::Timer>> timers;
@@ -457,21 +467,20 @@ public:
         PresumedLoc L;
         if (!v.Loc.isInvalid())
           L=S->getSourceManager().getPresumedLoc(v.Loc);
-        llvm::errs()<<k<<" "<<v.name<<" "<<L.getFilename()<<" "<<L.getLine()<<" "<<L.getColumn()<<"\n";
       }
-      llvm::errs()<<"\n";
     }
     if (timeStack.empty() || timeStack.back()->ocs!=s)
       return;
     //assert(timeStack.back()->ocs==s && "NOT TOP");
     if (timeStack.back()->ocs==s){
       timeStack.back()->Time+=llvm::TimeRecord::getCurrentTime(false);
+      timeStack.back()->Time-=timeStack.back()->startTime;
       if (timeStack.size()>1){
         timeStack[timeStack.size()-2]->childTime+=timeStack.back()->Time;
       }
-      if (!timeStack.back()->isDisplayed) {
-        delete timeStack.back();
-      }
+      if (timeStack.back()->isDisplayed) 
+        timeMap[timeStack.back()->name] += *timeStack.back();
+      delete timeStack.back();
       timeStack.pop_back();
     }
     /*if (timers.count(s)){
@@ -494,12 +503,11 @@ public:
     } else
       printHumanReadable();
     cont = {};
-    for (auto& t:dispayedTimes){
+    for (const auto& [k,v]:timeMap){
       //TODO: print
-      delete t;
+      llvm::outs()<<k<<": \t"<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
     }
-    dispayedTimes={};
-    llvm::errs()<<" "<<SetArgMap.size()<<" "<<cnt_<<"=CNT\n";
+    timeMap={};
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
                                const OverloadCandidateSet &set) override {
@@ -555,10 +563,7 @@ public:
       return;
     }
     assert(&set == timeStack.back()->ocs);
-    if (! timeStack.back()->isDisplayed){
-      timeStack.back()->isDisplayed=true;
-      dispayedTimes.push_back(timeStack.back());
-    }
+    timeStack.back()->isDisplayed=true;
     //time
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)
@@ -1183,7 +1188,6 @@ private:
   };
   OvInsSource getConversionSource(const SetArgs &setArg, int idx) const {
     if (idx >= 0){
-      llvm::errs()<<idx<<" "<<setArg.inArgs.size()<<"\n";
       return getSrcFromExpr(setArg.inArgs[idx]);//ERROR index
     }
     if (const auto *objExpr = setArg.ObjectExpr) {
@@ -1204,11 +1208,7 @@ private:
     const SetArgs &setArg = getSetArgs();
     bool isStaticCall = setArg.ObjectExpr == nullptr && C.IgnoreObjectArgument;
     //if (C.Function && C.Function){isStaticCall=true;}
-    llvm::errs()<<C.ExplicitCallArguments<<"=ECA "<<C.Conversions.size()<<" "<<Loc.printToString(S->getSourceManager())<<" "<<isStaticCall<<"\n";
-    llvm::errs()<<setArg.ObjectExpr <<" "<< C.IgnoreObjectArgument<<" "<<
       //setArg.Loc.printToString(S->getSourceManager())
-      (C.Function?C.Function->getSourceRange().printToString(S->getSourceManager()):"")
-      <<"\n";
     for (size_t i = 0; i < C.Conversions.size(); ++i) {
       const ExprValueKind fromKind =
           (callKinds.size() > i - isStaticCall)
@@ -1227,7 +1227,6 @@ private:
               !isa<CXXConstructorDecl>(C.Function) /*&& setArg.ObjectExpr*/) ||
               C.IsSurrogate)
             --inArgsIdx;
-        llvm::errs()<<isDeduceThis<<"=IDD";
         actual.src = getConversionSource(setArg, inArgsIdx-isDeduceThis);
       }
       if (!conv.isInitialized()) {
