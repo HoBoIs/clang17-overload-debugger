@@ -385,9 +385,11 @@ class DefaultOverloadInstCallback : public OverloadCallback {
   struct sumTimeInfo{
     llvm::TimeRecord Time;
     llvm::TimeRecord childTime;
+    int cnt=0;
     sumTimeInfo& operator+=(const timeInfo& ti){
       Time += ti.Time;
       childTime += ti.childTime;
+      ++cnt;
       return *this;
     }
   };
@@ -395,7 +397,7 @@ class DefaultOverloadInstCallback : public OverloadCallback {
   std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
   //llvm::TimerGroup TG{"name","desc"};
-  std::vector<timeInfo*> timeStack;//TODO make it not ptr
+  std::vector<timeInfo> timeStack;
   std::map<std::string,sumTimeInfo> timeMap;
   //std::vector<std::shared_ptr<llvm::Timer>> timerStack;
   //std::vector<std::shared_ptr<llvm::Timer>> keptTimers;//TODO: merge them by name
@@ -429,9 +431,8 @@ public:
       args.name=*S.name;
     if (args.isImplicit && args.name[0]!='$')
        args.name="$ "+args.name+"imp";
-    if (timeStack.empty() || timeStack.back()->ocs != &Set){
-      timeInfo* ti=new timeInfo{&Set,args.name,llvm::TimeRecord::getCurrentTime()};
-      timeStack.push_back(ti);
+    if (timeStack.empty() || timeStack.back().ocs != &Set){
+      timeStack.push_back(timeInfo{&Set,args.name,llvm::TimeRecord::getCurrentTime()});
     }
     /*if (args.name!=""){
       if (0 == timers.count(&Set)){
@@ -469,18 +470,17 @@ public:
           L=S->getSourceManager().getPresumedLoc(v.Loc);
       }
     }
-    if (timeStack.empty() || timeStack.back()->ocs!=s)
+    if (timeStack.empty() || timeStack.back().ocs!=s)
       return;
     //assert(timeStack.back()->ocs==s && "NOT TOP");
-    if (timeStack.back()->ocs==s){
-      timeStack.back()->Time+=llvm::TimeRecord::getCurrentTime(false);
-      timeStack.back()->Time-=timeStack.back()->startTime;
+    if (timeStack.back().ocs==s){
+      timeStack.back().Time+=llvm::TimeRecord::getCurrentTime(false);
+      timeStack.back().Time-=timeStack.back().startTime;
       if (timeStack.size()>1){
-        timeStack[timeStack.size()-2]->childTime+=timeStack.back()->Time;
+        timeStack[timeStack.size()-2].childTime+=timeStack.back().Time;
       }
-      if (timeStack.back()->isDisplayed) 
-        timeMap[timeStack.back()->name] += *timeStack.back();
-      delete timeStack.back();
+      if (timeStack.back().isDisplayed) 
+        timeMap[timeStack.back().name] += timeStack.back();
       timeStack.pop_back();
     }
     /*if (timers.count(s)){
@@ -505,7 +505,7 @@ public:
     cont = {};
     for (const auto& [k,v]:timeMap){
       //TODO: print
-      llvm::outs()<<k<<": \t"<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
+      llvm::outs()<<k<<": \t"<<v.cnt<<"\t "<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
     }
     timeMap={};
   }
@@ -562,8 +562,8 @@ public:
       //  timers[&set]->clear();
       return;
     }
-    assert(&set == timeStack.back()->ocs);
-    timeStack.back()->isDisplayed=true;
+    assert(&set == timeStack.back().ocs);
+    timeStack.back().isDisplayed=true;
     //time
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)

@@ -2628,6 +2628,9 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
       static constexpr llvm::StringLiteral OptPrefixes[]{
         "Hide","Show","Verbose"
       };
+      static constexpr llvm::StringLiteral TimeOptPrefixes[]{
+        "Hide","Unique","Summarize","Only"
+      };
       std::string argStr;
       llvm::raw_string_ostream os(argStr);
       for (const auto&[from,to]:Opts.OvInsSettings.Intervals){
@@ -2642,7 +2645,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
         <<(Opts.OvInsSettings.ShowBuiltInNonViable?"Show":"Hide")<<"BuiltInNonViable,"
         <<(Opts.OvInsSettings.ShowTemplateSpecs?"Show":"Hide")<<"TemplateSpecs,"
         <<(Opts.OvInsSettings.SummarizeBuiltInBinOps?"Summarize":"Show")<<"BuiltInBinOps,"
-        <<(Opts.OvInsSettings.measureTime?"Show":"Hide")<<"Time,"
+        <<TimeOptPrefixes[Opts.OvInsSettings.measureTime]<<"Time,"
         <<OptPrefixes[Opts.OvInsSettings.ShowCompares]<<"Compares,"
         <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
         <<(Opts.OvInsSettings.PrintYAML?",PrintYAML":"")
@@ -2867,10 +2870,15 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Hide;
         } else if (s=="VerboseCompares"){
           Opts.OvInsSettings.ShowCompares=clang::FrontendOptions::SC_Verbose;
-        } else if (s=="ShowTime"){
-          Opts.OvInsSettings.measureTime=true;
+        //"Unique","Summarize","OnlySumm"
         } else if (s=="HideTime"){
-          Opts.OvInsSettings.measureTime=false;
+          Opts.OvInsSettings.measureTime=clang::FrontendOptions::SC_None;
+        } else if (s=="UniqueTime"){
+          Opts.OvInsSettings.measureTime=clang::FrontendOptions::SC_Unique;
+        } else if (s=="SummarizeTime"){
+          Opts.OvInsSettings.measureTime=clang::FrontendOptions::SC_Summaize;
+        } else if (s=="OnlyTime"){
+          Opts.OvInsSettings.measureTime=clang::FrontendOptions::SC_OnlyTime;
         } else if (s=="SummarizeBuiltInBinOps"){
           Opts.OvInsSettings.SummarizeBuiltInBinOps=true;
         } else if (s=="ShowBuiltInBinOps"){
@@ -2887,7 +2895,7 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvInsSettings.CandFunName=s.substr(9);
         } else {
           bool valid=true;
-          
+
           size_t toSize;
           int from=std::stoi(s,&toSize),to;
           if (toSize==s.size())
@@ -2933,7 +2941,7 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           if (!valid)
             Diags.Report(diag::err_drv_invalid_value)<<A->getAsString(Args)<<s;
           Opts.OvInsSettings.Intervals.emplace_back(from,to);
-        } 
+        }
       }
     }
 
