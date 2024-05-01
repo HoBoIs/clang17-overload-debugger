@@ -496,16 +496,19 @@ public:
   virtual void initialize(const Sema & s) override{};
   virtual void finalize(const Sema &) override{};
   virtual void atEnd() override {
+    if (settings.measureTime != clang::FrontendOptions::SC_OnlyTime){
     if (settings.PrintYAML) {
       for (auto &x : cont)
         displayOvInsResEntry(llvm::outs(), x.Entry);
       llvm::outs() << "...\n";
     } else
       printHumanReadable();
+    }
     cont = {};
+    if (settings.measureTime & 2)
     for (const auto& [k,v]:timeMap){
       //TODO: print
-      llvm::outs()<<k<<": \t"<<v.cnt<<"\t "<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
+      llvm::outs()<<k<<": \tcount:\t"<<v.cnt<<"\t overload time:\t"<<v.Time.getWallTime()<<"s\t from witch in children: \t"<< v.childTime.getWallTime() <<"s\n";
     }
     timeMap={};
   }
@@ -563,7 +566,8 @@ public:
       return;
     }
     assert(&set == timeStack.back().ocs);
-    timeStack.back().isDisplayed=true;
+    if (settings.measureTime)
+	timeStack.back().isDisplayed=true;
     //time
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)
@@ -583,6 +587,8 @@ public:
     if (!node.Entry.isImplicit || settings.ShowImplicitConversions)
       if (nameOk())
         cont.add(node);
+      else
+	timeStack.back().isDisplayed=false;
 
     inBestOC = false;
   }
