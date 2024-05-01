@@ -508,7 +508,7 @@ public:
     if (settings.measureTime & 2)
     for (const auto& [k,v]:timeMap){
       //TODO: print
-      llvm::outs()<<k<<": \tcount:\t"<<v.cnt<<"\t overload time:\t"<<v.Time.getWallTime()<<"s\t from witch in children: \t"<< v.childTime.getWallTime() <<"s\n";
+      llvm::outs()<<k<<": \tcount:\t"<<v.cnt<<"\t overload time:\t"<<v.Time.getWallTime()<<"s\t from this in children: \t"<< v.childTime.getWallTime() <<"s\n";
     }
     timeMap={};
   }
@@ -789,7 +789,7 @@ private:
                          SourceLocation loc) const {
     unsigned ID1 = S->Diags.getDiagnosticIDs()->getCustomDiagID(
         DiagnosticIDs::Note,
-        "Compearing candidates resulted in %0 (reason: %1) %2 %3%4%5");
+        "Comparing candidates resulted in %0 (reason: %1) %2 %3%4%5");
     S->Diags.Report(loc, ID1)
         << (Entry.C1Better ? "The first is better" : "The first is not better")
         << str::toString(Entry.reason)
@@ -886,7 +886,7 @@ private:
     if (Entry.best)
       printCandEntry(*Entry.best, "Best ");
     for (const auto &x : Entry.problems)
-      printCandEntry(x, Entry.ovRes == clang::OR_Ambiguous ? "Ambigius "
+      printCandEntry(x, Entry.ovRes == clang::OR_Ambiguous ? "Ambiguous "
                                                            : "Unresolvable ");
     // OR unresolvable concept
     for (const auto &x : Entry.viableCandidates)
