@@ -1,44 +1,37 @@
-# The LLVM Compiler Infrastructure
+# Overload inspector for C++
 
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/llvm/llvm-project/badge)](https://securityscorecards.dev/viewer/?uri=github.com/llvm/llvm-project)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8273/badge)](https://www.bestpractices.dev/projects/8273)
-[![libc++](https://github.com/llvm/llvm-project/actions/workflows/libcxx-build-and-test.yaml/badge.svg?branch=main&event=schedule)](https://github.com/llvm/llvm-project/actions/workflows/libcxx-build-and-test.yaml?query=event%3Aschedule)
+This is a fork of [LLVM project](https://github.com/llvm/llvm-project)
 
-Welcome to the LLVM project!
+This tool helps for inspectiong and profileing overload resolutions in C++
 
-This repository contains the source code for LLVM, a toolkit for the
-construction of highly optimized compilers, optimizers, and run-time
-environments.
+Usage: After building clang from the code you can use it by calling the nerly built clang with adding the flag "-Xclang -ovins-dump" for the default configuration
 
-The LLVM project has multiple components. The core of the project is
-itself called "LLVM". This contains all of the tools, libraries, and header
-files needed to process intermediate representations and convert them into
-object files. Tools include an assembler, disassembler, bitcode analyzer, and
-bitcode optimizer.
+If you want more controll you can use "-Xclang -ovins-dump-opt=..." where ... contains the additional settings separated by commas.
 
-C-like languages use the [Clang](http://clang.llvm.org/) frontend. This
-component compiles C, C++, Objective-C, and Objective-C++ code into LLVM bitcode
--- and from there into object files, using LLVM.
+The valid options are (defaults highlited): 
 
-Other components include:
-the [libc++ C++ standard library](https://libcxx.llvm.org),
-the [LLD linker](https://lld.llvm.org), and more.
+CandName:($functionName) for filtering functions by name
 
-## Getting the Source Code and Building LLVM
+($from)-($to) for filtering by line
 
-Consult the
-[Getting Started with LLVM](https://llvm.org/docs/GettingStarted.html#getting-the-source-code-and-building-llvm)
-page for information on building and running LLVM.
+[**Show**/Hide]NonViableCands for Showing/Hiding the non vable candidates
 
-For information on how to contribute to the LLVM project, please take a look at
-the [Contributing to LLVM](https://llvm.org/docs/Contributing.html) guide.
+[Show/**Hide**]Includes for Showing/Hiding overvoads in heather files
 
-## Getting in touch
+[Show/**Hide**]EmptyOverloads for Showing/Hiding overloads without wiable or non viable candidates
 
-Join the [LLVM Discourse forums](https://discourse.llvm.org/), [Discord
-chat](https://discord.gg/xS7Z362),
-[LLVM Office Hours](https://llvm.org/docs/GettingInvolved.html#office-hours) or
-[Regular sync-ups](https://llvm.org/docs/GettingInvolved.html#online-sync-ups).
+[Show/**Hide**]BuiltInNonViable for Showing/Hiding the built in non viable operators
 
-The LLVM project has adopted a [code of conduct](https://llvm.org/docs/CodeOfConduct.html) for
-participants to all modes of communication within the project.
+[Show/**Hide**]ImplicitConversions for Showing/Hiding the overload resolution for the implicit conversions
+
+[**Show**/Hide]TemplateSpecs for Showing/Hiding whitch thmplate the type came from
+
+[**Summarize**/Show]BuiltInBinOps for possibly summarizing the built in binary operators instead of listing all of them
+
+[**Hide**/Summarize/Only]Time for profiling
+
+[Hide/**Show**/Verbose]Compares for Showing/Hiding comparisons between candidates (Verbose shows even the less relevant ones)
+
+[Hide/**Show**/Verbose]Conversions for Showing/Hiding the conversions needed for the candtdates
+
+PrintYAML for printing YAML instead of remarks/notes
