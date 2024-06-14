@@ -8,6 +8,7 @@
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/YAMLTraits.h"
@@ -336,6 +337,7 @@ void displayOvInsResEntry(llvm::raw_ostream &Out, OvInsResEntry &Entry) {
   Out << "---" << YAML << "\n";
 }
 class DefaultOverloadInstCallback : public OverloadCallback {
+  using CompareKind = clang::ImplicitConversionSequence::CompareKind;
   struct cmpInfo {
     const Sema *TheSema;
     SourceLocation Loc;
@@ -345,6 +347,7 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     bool C1Better;
     int infoIdx;
     long duration;
+    std::vector<CompareKind> cmpRes;
     bool sameCands(const cmpInfo &o) const {
       return Cand1 == o.Cand1 && Cand2 == o.Cand2;
     }
@@ -352,17 +355,17 @@ class DefaultOverloadInstCallback : public OverloadCallback {
       return Cand2 == o.Cand1 && Cand1 == o.Cand2;
     }
   };
-  using CompareKind = clang::ImplicitConversionSequence::CompareKind;
   static constexpr llvm::StringLiteral Kinds[] = {"[temporary]", "", "&&"};
   const Sema *S = nullptr;
   bool inBestOC = false;
   bool inCompare = false;
   const OverloadCandidateSet *Set = nullptr;
   SourceLocation Loc = {};
+  std::optional <llvm::raw_fd_ostream> outStream;
   // std::vector<OvInsCompareEntry> compares;
   llvm::SmallVector<cmpInfo> compares;
   OvInsResCont cont;
-  clang::FrontendOptions::OvInsSettingsType settings;
+  const clang::FrontendOptions::OvInsSettingsType settings;
   std::vector<CompareKind> compareResults;
   struct SetArgs {
     const OverloadCandidateSet *Set;
@@ -403,7 +406,29 @@ class DefaultOverloadInstCallback : public OverloadCallback {
   //std::vector<std::shared_ptr<llvm::Timer>> keptTimers;//TODO: merge them by name
   //std::map<const OverloadCandidateSet*, std::shared_ptr<llvm::Timer>> timers;
   //std::map<std::string,const OverloadCandidateSet*> timerPtrs;
+  StringRef getFilename(){
+      auto id=S->getSourceManager().getMainFileID();
+      const auto *entry=S->getSourceManager().getFileEntryForID(id);
+      return entry->tryGetRealPathName();
+  }
+  llvm::raw_fd_ostream& makeOSRef(StringRef name){
+
+    if (outStream==std::nullopt){
+      std::error_code EC;
+      outStream.emplace((name+".yaml").str(),EC,llvm::sys::fs::CD_CreateAlways );
+      if (EC){
+        outStream=std::nullopt;
+      }
+    }
+    if (outStream) return *outStream;
+    return llvm::outs();
+  }
 public:
+  DefaultOverloadInstCallback(const clang::FrontendOptions::OvInsSettingsType& s): settings(s){
+    static int counter=0;
+    counter++;
+    llvm::errs()<<counter<<"\n";
+  }
   virtual void addSetInfo(const OverloadCandidateSet &Set,
                           const SetInfo &S) override {
     SetArgMap[&Set].Set = &Set;
@@ -455,9 +480,6 @@ public:
     if (needAllCompareInfo())
       compareResults = c;
   };
-  void setSettings(const clang::FrontendOptions::OvInsSettingsType &s) {
-    settings = s;
-  }
   size_t cnt_=0;
   virtual void atOCSDestruct(const OverloadCandidateSet* s) override {
     S=&s->getSema();
@@ -496,18 +518,28 @@ public:
   virtual void initialize(const Sema & s) override{};
   virtual void finalize(const Sema &) override{};
   virtual void atEnd() override {
+    //TODO: filename
+    auto name=getFilename();
     if (settings.PrintYAML) {
+      auto& osref=makeOSRef(name);
       for (auto &x : cont)
-        displayOvInsResEntry(llvm::outs(), x.Entry);
-      llvm::outs() << "...\n";
-    } else
+        displayOvInsResEntry(osref, x.Entry);
+      osref << "...\n";
+      cont = {};
+      for (const auto& [k,v]:timeMap){
+        osref<<k<<": \t"<<v.cnt<<"\t "<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
+      }
+      timeMap={};
+      outStream->flush();
+    } else {
+      llvm::outs()<<name<<":\n";
       printHumanReadable();
-    cont = {};
-    for (const auto& [k,v]:timeMap){
-      //TODO: print
-      llvm::outs()<<k<<": \t"<<v.cnt<<"\t "<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
+      cont = {};
+      for (const auto& [k,v]:timeMap){
+        llvm::outs()<<k<<": \t"<<v.cnt<<"\t "<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
+      }
+      timeMap={};
     }
-    timeMap={};
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
                                const OverloadCandidateSet &set) override {
@@ -575,6 +607,7 @@ public:
     node.Entry = getResEntry(ovRes, BestOrProblem);
     node.Entry.passedTime = (ovEndTime - ovStartTime).count();
     node.Entry.compares = transformCompares();
+    compareResults={};
     compares.clear();
     if (settings.ShowCompares != FrontendOptions::SC_Verbose)
       filterForRelevant(node.Entry);
@@ -608,6 +641,10 @@ public:
       time = (std::chrono::steady_clock().now() - cmpStartTime).count();
     compares.push_back(
         cmpInfo{&TheSema, Loc, reason, &Cand1, &Cand2, res, infoIdx, time});
+    auto& cmp=compares.back();
+    auto callKinds=getCallKinds();
+    cmp.cmpRes=std::move(compareResults);
+    compareResults={};
     inCompare = false;
   }
 
@@ -663,7 +700,7 @@ private:
                              cmp.Cand2->IgnoreObjectArgument);
         Entry.conversionCompares.push_back(
             ConversionCompare(*cmp.Cand1, *cmp.Cand2, i + isStaticCall,
-                              compareResults[i], callKinds));
+                              cmp.cmpRes[i], callKinds));
         Entry.conversionCompares.back().place = {};
       }
     }
@@ -1688,6 +1725,8 @@ private:
     v.emplace_back(cand);
   }
 };
+//int counter=0;
+//ASTunit getmainfile
 } // namespace
 std::unique_ptr<ASTConsumer>
 OvInsDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
@@ -1696,8 +1735,7 @@ OvInsDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
 void OvInsDumpAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   EnsureSemaIsCreated(CI, *this);
-  auto x = std::make_unique<DefaultOverloadInstCallback>();
-  x->setSettings(CI.getFrontendOpts().OvInsSettings);
+  auto x = std::make_unique<DefaultOverloadInstCallback>(CI.getFrontendOpts().OvInsSettings);
   CI.getSema().OverloadInspectionCallbacks.push_back(std::move(x));
   ASTFrontendAction::ExecuteAction();
 }
