@@ -46,6 +46,37 @@ void EnsureSemaIsCreated(CompilerInstance &CI, FrontendAction &Action) {
 } // namespace
 
 namespace {
+
+struct timeInfo{
+  const OverloadCandidateSet* ocs;
+  std::string name;
+  llvm::TimeRecord startTime;
+  llvm::TimeRecord Time;
+  llvm::TimeRecord childTime;
+  bool isDisplayed=false;
+};
+struct sumTimeInfo{
+  llvm::TimeRecord Time;
+  llvm::TimeRecord childTime;
+  int cnt=0;
+  sumTimeInfo& operator+=(const timeInfo& ti){
+    Time += ti.Time;
+    childTime += ti.childTime;
+    ++cnt;
+    return *this;
+  }
+};
+struct sumTimeInfoData{
+  double time,childTime;
+  int cnt;
+  std::string name;
+  sumTimeInfoData()=default;
+  sumTimeInfoData(const sumTimeInfo& t, const std::string& n):
+    time(t.Time.getWallTime()),
+    childTime(t.childTime.getWallTime()), cnt(t.cnt),name(n){
+  }
+};
+
 struct OvInsSource {
   SourceRange range;
   SourceLocation Loc;
@@ -194,6 +225,14 @@ template <> struct MappingTraits<OvInsTemplateSpec> {
     io.mapRequired("IsExact", fields.isExact);
   }
 };
+template <> struct MappingTraits<sumTimeInfoData> {
+  static void mapping(IO &io, sumTimeInfoData & fields) {
+    io.mapRequired("name",fields.name);
+    io.mapRequired("count",fields.cnt);
+    io.mapRequired("time" ,fields.time);
+    io.mapRequired("child-time",fields.childTime);
+  }
+};
 template <> struct MappingTraits<OvInsCandEntry> {
   static void mapping(IO &io, OvInsCandEntry &fields) {
     io.mapRequired("Name", fields.name);
@@ -326,6 +365,17 @@ QualType getToType(const OverloadCandidate &C, int idx) {
   }
   return C.Function->parameters()[idx]->getType();
 }
+void displayOvInsMap(llvm::raw_ostream &Out,sumTimeInfoData &val) {
+  std::string YAML;
+  {
+    llvm::raw_string_ostream OS(YAML);
+    llvm::yaml::Output YO(OS);
+    llvm::yaml::EmptyContext Context;
+    llvm::yaml::yamlize(YO, val, true, Context);
+  }
+  Out << "---" << YAML << "\n";
+}
+
 void displayOvInsResEntry(llvm::raw_ostream &Out, OvInsResEntry &Entry) {
   std::string YAML;
   {
@@ -377,26 +427,7 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     bool isImplicit = false;
     std::string name="";
   };
-  struct timeInfo{
-    const OverloadCandidateSet* ocs;
-    std::string name;
-    llvm::TimeRecord startTime;
-    llvm::TimeRecord Time;
-    llvm::TimeRecord childTime;
-    bool isDisplayed=false;
-  };
-  struct sumTimeInfo{
-    llvm::TimeRecord Time;
-    llvm::TimeRecord childTime;
-    int cnt=0;
-    sumTimeInfo& operator+=(const timeInfo& ti){
-      Time += ti.Time;
-      childTime += ti.childTime;
-      ++cnt;
-      return *this;
-    }
-  };
-  std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
+    std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
   std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
   //llvm::TimerGroup TG{"name","desc"};
@@ -456,7 +487,7 @@ public:
       args.name=*S.name;
     if (args.isImplicit && args.name[0]!='$')
        args.name="$ "+args.name+"imp";
-    if (timeStack.empty() || timeStack.back().ocs != &Set){
+    if ((timeStack.empty() || timeStack.back().ocs != &Set)&&(settings.measureTime & 2)){
       timeStack.push_back(timeInfo{&Set,args.name,llvm::TimeRecord::getCurrentTime()});
     }
     /*if (args.name!=""){
@@ -526,9 +557,25 @@ public:
       for (auto &x : cont)
         displayOvInsResEntry(osref, x.Entry);
       cont = {};
-    if (settings.measureTime & 2)
-      for (const auto& [k,v]:timeMap){
-        osref<<k<<": \t"<<v.cnt<<"\t "<<v.Time.getWallTime()<<"\t "<< v.childTime.getWallTime() <<"\n";
+      if (settings.measureTime & 2){
+        std::vector<sumTimeInfoData  > times;
+        sumTimeInfoData  totalTime{};
+        llvm::errs()<<1;
+        totalTime.name="TotalOverloadTime";
+        for (auto& [k,v]: timeMap){
+          times.push_back({v,k});
+          totalTime.childTime+=times.back().childTime;
+          totalTime.time +=times.back().time;
+        }
+        llvm::errs()<<2;
+        std::sort(times.begin(),times.end(),[](const sumTimeInfoData& a, const sumTimeInfoData& b){return a.time>b.time;});
+        llvm::errs()<<3;
+        displayOvInsMap(osref, totalTime);
+        llvm::errs()<<4;
+        for (auto& t: times){
+          displayOvInsMap(osref, t);
+        }
+        llvm::errs()<<5;
       }
       osref << "...\n";
       timeMap={};
@@ -578,7 +625,7 @@ public:
 
     using Seconds = std::chrono::duration<double, std::ratio<1>>;
     double startTime = Seconds(now.time_since_epoch()).count();*/
-    if (settings.measureTime)
+    if (settings.measureTime )
       ovStartTime = std::chrono::steady_clock().now();
   }
   virtual void atOverloadEnd(const Sema &s, const SourceLocation &loc,
@@ -598,9 +645,9 @@ public:
       //  timers[&set]->clear();
       return;
     }
-    assert(&set == timeStack.back().ocs);
+    assert(timeStack.empty() ||  &set == timeStack.back().ocs);
     if (settings.measureTime)
-	timeStack.back().isDisplayed=true;
+	    timeStack.back().isDisplayed=true;
     //time
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)
@@ -618,11 +665,11 @@ public:
       filterForRelevant(node.Entry);
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);
-    if (!node.Entry.isImplicit || settings.ShowImplicitConversions)
-      if (nameOk())
-        cont.add(node);
-      else
-	timeStack.back().isDisplayed=false;
+    if ((!node.Entry.isImplicit || settings.ShowImplicitConversions) && nameOk())
+      cont.add(node);
+    else
+      if (!timeStack.empty() && timeStack.back().ocs== Set)
+	      timeStack.back().isDisplayed=false;
 
     inBestOC = false;
   }
@@ -1740,9 +1787,9 @@ OvInsDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
   return std::make_unique<ASTConsumer>();
 }
 void OvInsDumpAction::ExecuteAction() {
-  CompilerInstance &CI = getCompilerInstance();
+  /*CompilerInstance &CI = getCompilerInstance();
   EnsureSemaIsCreated(CI, *this);
   auto x = std::make_unique<DefaultOverloadInstCallback>(CI.getFrontendOpts().OvInsSettings);
   CI.getSema().OverloadInspectionCallbacks.push_back(std::move(x));
-  ASTFrontendAction::ExecuteAction();
+  ASTFrontendAction::ExecuteAction();*/
 }

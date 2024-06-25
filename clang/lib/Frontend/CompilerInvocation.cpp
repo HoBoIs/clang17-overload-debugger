@@ -2648,8 +2648,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
         <<TimeOptPrefixes[Opts.OvInsSettings.measureTime]<<"Time,"
         <<OptPrefixes[Opts.OvInsSettings.ShowCompares]<<"Compares,"
         <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
-        <<(Opts.OvInsSettings.PrintYAML?",PrintYAML":"")
-        <<(Opts.OvInsSettings.Help?",Help":"");
+        <<(Opts.OvInsSettings.PrintYAML?",PrintYAML":"");
       GenerateArg(Consumer, OPT_ovins_dump_opt,argStr);
     };
 
@@ -2889,8 +2888,6 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
           Opts.OvInsSettings.ShowTemplateSpecs=false;
         } else if (s=="PrintYAML"){
           Opts.OvInsSettings.PrintYAML=true;
-        } else if (s=="Help"){
-          Opts.OvInsSettings.Help=true;
         } else if (s.substr(0,9)=="CandName:"){
           Opts.OvInsSettings.CandFunName=s.substr(9);
         } else {
