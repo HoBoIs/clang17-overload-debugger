@@ -4,7 +4,9 @@
 #include "clang/Basic/SourceLocation.h"
 //#include "clang/Sema/Sema.h"
 #include "clang/Sema/Overload.h"
+#include "clang/Frontend/FrontendOptions.h"
 #include "llvm/ADT/ArrayRef.h"
+#include <memory>
 #include <optional>
 namespace clang{
 
@@ -97,7 +99,8 @@ void atCompareOverloadEnd(OverloadCallbackPtrs &Callbacks, const Sema& TheSema,c
   }
 }
 
-
+std::unique_ptr<OverloadCallback> makeDefaultOverloadCallback(const clang::FrontendOptions::OvInsSettingsType&);
 } // namespace clang
+
 
 #endif

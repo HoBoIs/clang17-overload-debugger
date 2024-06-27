@@ -2563,8 +2563,6 @@ static const auto &getFrontendActionTable() {
       {frontend::PrintPreamble, OPT_print_preamble},
       {frontend::PrintPreprocessedInput, OPT_E},
       {frontend::TemplightDump, OPT_templight_dump},
-      {frontend::OvInsDump, OPT_ovins_dump_opt},
-      {frontend::OvInsDump, OPT_ovins_dump},
       {frontend::RewriteMacros, OPT_rewrite_macros},
       {frontend::RewriteObjC, OPT_rewrite_objc},
       {frontend::RewriteTest, OPT_rewrite_test},
@@ -2623,8 +2621,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
     };
   }
 
-  if (Opts.ProgramAction == frontend::OvInsDump) {
-    GenerateProgramAction = [&]() {
+  if (Opts.OvInsSettings.enabled) {//Move it?
       static constexpr llvm::StringLiteral OptPrefixes[]{
         "Hide","Show","Verbose"
       };
@@ -2650,8 +2647,6 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
         <<OptPrefixes[Opts.OvInsSettings.ShowConversions]<<"Conversions"
         <<(Opts.OvInsSettings.PrintYAML?",PrintYAML":"");
       GenerateArg(Consumer, OPT_ovins_dump_opt,argStr);
-    };
-
   }
   // FIXME: Simplify the complex 'AST dump' command line.
   if (Opts.ProgramAction == frontend::ASTDump) {
@@ -2807,34 +2802,15 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 #undef FRONTEND_OPTION_WITH_MARSHALLING
 
   Opts.ProgramAction = frontend::ParseSyntaxOnly;
-  if (const Arg *A = Args.getLastArg(OPT_Action_Group)) {
+
+  if (Args.hasArg(OPT_ovins_dump_opt,OPT_ovins_dump)){
+    auto* A=Args.getLastArg(OPT_ovins_dump_opt,OPT_ovins_dump);
     OptSpecifier Opt = OptSpecifier(A->getOption().getID());
-    std::optional<frontend::ActionKind> ProgramAction = getFrontendAction(Opt);
-    assert(ProgramAction && "Option specifier not in Action_Group.");
-
-    if (ProgramAction == frontend::ASTDump &&
-        (Opt == OPT_ast_dump_all_EQ || Opt == OPT_ast_dump_EQ)) {
-      unsigned Val = llvm::StringSwitch<unsigned>(A->getValue())
-                         .CaseLower("default", ADOF_Default)
-                         .CaseLower("json", ADOF_JSON)
-                         .Default(std::numeric_limits<unsigned>::max());
-
-      if (Val != std::numeric_limits<unsigned>::max())
-        Opts.ASTDumpFormat = static_cast<ASTDumpOutputFormat>(Val);
-      else {
-        Diags.Report(diag::err_drv_invalid_value)
-            << A->getAsString(Args) << A->getValue();
-        Opts.ASTDumpFormat = ADOF_Default;
-      }
+    Opts.OvInsSettings.enabled=true;
+    if (Opt== OPT_ovins_dump){
     }
+    if (Opt == OPT_ovins_dump_opt){
 
-    if (ProgramAction == frontend::FixIt && Opt == OPT_fixit_EQ)
-      Opts.FixItSuffix = A->getValue();
-    if (ProgramAction == frontend::OvInsDump){
-      if (Opt== OPT_ovins_dump){
-      }
-    }
-    if (ProgramAction == frontend::OvInsDump && Opt == OPT_ovins_dump_opt){
       const auto& x=A->getValues();
       for (const std::string s:x){
         if (s=="ShowNonViableCands"){
@@ -2908,27 +2884,6 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
             }
           if (from<0)
             valid=false;
-          //TODO stoi;
-          /*unsigned lF=0;
-          unsigned actual=0;
-          bool lFfinished=false;
-          for (const char& c:s){
-            if (c=='-'){
-              if (!lFfinished){
-                lFfinished=true;
-                lF=actual;
-                actual=0;
-              }else{
-                valid=false;
-                break;
-              }
-            }else if(c>='0' && c<='9'){
-              actual=10*actual+c-'0';
-            }else{
-              valid=false;
-              break;
-            }
-          }*/
           if (valid && to<from){
             //int id=Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Error,"The start of the interval must be not larger than it's end");
             //Diags.Report(id);
@@ -2941,7 +2896,31 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
         }
       }
     }
+  }
+  if (const Arg *A = Args.getLastArg(OPT_Action_Group)) {
+    OptSpecifier Opt = OptSpecifier(A->getOption().getID());
+    std::optional<frontend::ActionKind> ProgramAction = getFrontendAction(Opt);
+    assert(ProgramAction && "Option specifier not in Action_Group.");
 
+    if (ProgramAction == frontend::ASTDump &&
+        (Opt == OPT_ast_dump_all_EQ || Opt == OPT_ast_dump_EQ)) {
+      unsigned Val = llvm::StringSwitch<unsigned>(A->getValue())
+                         .CaseLower("default", ADOF_Default)
+                         .CaseLower("json", ADOF_JSON)
+                         .Default(std::numeric_limits<unsigned>::max());
+
+      if (Val != std::numeric_limits<unsigned>::max())
+        Opts.ASTDumpFormat = static_cast<ASTDumpOutputFormat>(Val);
+      else {
+        Diags.Report(diag::err_drv_invalid_value)
+            << A->getAsString(Args) << A->getValue();
+        Opts.ASTDumpFormat = ADOF_Default;
+      }
+    }
+
+    if (ProgramAction == frontend::FixIt && Opt == OPT_fixit_EQ)
+      Opts.FixItSuffix = A->getValue();
+    
     if (ProgramAction == frontend::GenerateInterfaceStubs) {
       StringRef ArgStr =
           Args.hasArg(OPT_interface_stub_version_EQ)
@@ -4431,7 +4410,6 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::RewriteTest:
   case frontend::RunAnalysis:
   case frontend::TemplightDump:
-  case frontend::OvInsDump:
   case frontend::MigrateSource:
     return false;
 

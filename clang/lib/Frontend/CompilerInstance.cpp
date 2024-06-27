@@ -35,6 +35,7 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
+#include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Serialization/ASTReader.h"
 #include "clang/Serialization/GlobalModuleIndex.h"
@@ -764,6 +765,8 @@ void CompilerInstance::createSema(TranslationUnitKind TUKind,
         currentModule, getLangOpts().APINotesModules,
         getAPINotesOpts().ModuleSearchPaths);
   }
+  if (getFrontendOpts().OvInsSettings.enabled)
+    TheSema->OverloadInspectionCallbacks.push_back(makeDefaultOverloadCallback(getFrontendOpts().OvInsSettings));
 }
 
 // Output Files

@@ -29,23 +29,6 @@
 using namespace clang;
 
 namespace {
-CodeCompleteConsumer *GetCodeCompletionConsumer(CompilerInstance &CI) {
-  return CI.hasCodeCompletionConsumer() ? &CI.getCodeCompletionConsumer()
-                                        : nullptr;
-}
-
-void EnsureSemaIsCreated(CompilerInstance &CI, FrontendAction &Action) {
-  if (Action.hasCodeCompletionSupport() &&
-      !CI.getFrontendOpts().CodeCompletionAt.FileName.empty())
-    CI.createCodeCompletionConsumer();
-
-  if (!CI.hasSema())
-    CI.createSema(Action.getTranslationUnitKind(),
-                  GetCodeCompletionConsumer(CI));
-}
-} // namespace
-
-namespace {
 
 struct timeInfo{
   const OverloadCandidateSet* ocs;
@@ -1779,17 +1762,9 @@ private:
     v.emplace_back(cand);
   }
 };
-//int counter=0;
-//ASTunit getmainfile
 } // namespace
-std::unique_ptr<ASTConsumer>
-OvInsDumpAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-  return std::make_unique<ASTConsumer>();
+namespace clang {
+std::unique_ptr<OverloadCallback> makeDefaultOverloadCallback(const clang::FrontendOptions::OvInsSettingsType& s){
+  return std::make_unique<DefaultOverloadInstCallback>(s);
 }
-void OvInsDumpAction::ExecuteAction() {
-  /*CompilerInstance &CI = getCompilerInstance();
-  EnsureSemaIsCreated(CI, *this);
-  auto x = std::make_unique<DefaultOverloadInstCallback>(CI.getFrontendOpts().OvInsSettings);
-  CI.getSema().OverloadInspectionCallbacks.push_back(std::move(x));
-  ASTFrontendAction::ExecuteAction();*/
-}
+} // namespace clang
