@@ -1,4 +1,5 @@
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/Expr.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -10,6 +11,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
@@ -41,7 +43,9 @@ struct timeInfo{
 struct sumTimeInfo{
   llvm::TimeRecord Time;
   llvm::TimeRecord childTime;
+  llvm::TimeRecord topLevelTime;
   int cnt=0;
+  int topLevelCnt=0;
   sumTimeInfo& operator+=(const timeInfo& ti){
     Time += ti.Time;
     childTime += ti.childTime;
@@ -51,12 +55,19 @@ struct sumTimeInfo{
 };
 struct sumTimeInfoData{
   double time,childTime;
-  int cnt;
+  double topLevelTime=0;
+  int cnt,topLevelCnt=0;
   std::string name;
   sumTimeInfoData()=default;
   sumTimeInfoData(const sumTimeInfo& t, const std::string& n):
     time(t.Time.getWallTime()),
-    childTime(t.childTime.getWallTime()), cnt(t.cnt),name(n){
+    childTime(t.childTime.getWallTime()),
+    topLevelTime(t.topLevelTime.getWallTime()), cnt(t.cnt), 
+    topLevelCnt(t.topLevelCnt), name(n){
+  }
+  sumTimeInfoData(const llvm::TimeRecord& t, const std::string& n):
+    time(t.getWallTime()),
+    childTime{}, cnt(1),name(n){
   }
 };
 
@@ -214,6 +225,8 @@ template <> struct MappingTraits<sumTimeInfoData> {
     io.mapRequired("count",fields.cnt);
     io.mapRequired("time" ,fields.time);
     io.mapRequired("child-time",fields.childTime);
+    io.mapRequired("top-level-time",fields.topLevelTime);
+    io.mapRequired("top-level-count",fields.topLevelCnt);
   }
 };
 template <> struct MappingTraits<OvInsCandEntry> {
@@ -297,7 +310,10 @@ const QualType getFromType(const ImplicitConversionSequence &C) {
   case ImplicitConversionSequence::StaticObjectArgumentConversion:
     return {};
   case ImplicitConversionSequence::UserDefinedConversion:
-    return C.UserDefined.Before.getFromType();
+    if (C.UserDefined.ConversionFunction)
+      if (C.UserDefined.Before.First || C.UserDefined.Before.Second || C.UserDefined.Before.Third)
+        return C.UserDefined.Before.getFromType();
+    return {};
   case ImplicitConversionSequence::AmbiguousConversion:
     return C.Ambiguous.getFromType();
   case ImplicitConversionSequence::EllipsisConversion:
@@ -348,7 +364,7 @@ QualType getToType(const OverloadCandidate &C, int idx) {
   }
   return C.Function->parameters()[idx]->getType();
 }
-void displayOvInsMap(llvm::raw_ostream &Out,sumTimeInfoData &val) {
+void displaySumTimeInfoData(llvm::raw_ostream &Out,sumTimeInfoData &val) {
   std::string YAML;
   {
     llvm::raw_string_ostream OS(YAML);
@@ -370,6 +386,7 @@ void displayOvInsResEntry(llvm::raw_ostream &Out, OvInsResEntry &Entry) {
   Out << "---" << YAML << "\n";
 }
 class DefaultOverloadInstCallback : public OverloadCallback {
+  llvm::TimeRecord semaTime;
   using CompareKind = clang::ImplicitConversionSequence::CompareKind;
   struct cmpInfo {
     const Sema *TheSema;
@@ -410,12 +427,14 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     bool isImplicit = false;
     std::string name="";
   };
+  llvm::TimeRecord topLevelTimeSum{};
     std::chrono::time_point<std::chrono::steady_clock> ovStartTime;
   std::chrono::time_point<std::chrono::steady_clock> cmpStartTime;
   std::unordered_map<const OverloadCandidateSet *, SetArgs> SetArgMap;
   //llvm::TimerGroup TG{"name","desc"};
   std::vector<timeInfo> timeStack;
   std::map<std::string,sumTimeInfo> timeMap;
+  std::string fileName;
   //std::vector<std::shared_ptr<llvm::Timer>> timerStack;
   //std::vector<std::shared_ptr<llvm::Timer>> keptTimers;//TODO: merge them by name
   //std::map<const OverloadCandidateSet*, std::shared_ptr<llvm::Timer>> timers;
@@ -432,6 +451,7 @@ class DefaultOverloadInstCallback : public OverloadCallback {
       outStream.emplace((name+".yaml").str(),EC,llvm::sys::fs::CD_CreateAlways );
       if (EC){
         outStream=std::nullopt;
+        llvm::errs()<<"EC IS TRUE\n";
       }
     }
     if (outStream) return *outStream;
@@ -439,9 +459,10 @@ class DefaultOverloadInstCallback : public OverloadCallback {
   }
 public:
   DefaultOverloadInstCallback(const clang::FrontendOptions::OvInsSettingsType& s): settings(s){
-    static int counter=0;
+    /*static int counter=0;
     counter++;
-    llvm::errs()<<counter<<"\n";
+    llvm::errs()<<counter<<"\n";*/
+    semaTime=llvm::TimeRecord::getCurrentTime();
   }
   virtual void addSetInfo(const OverloadCandidateSet &Set,
                           const SetInfo &S) override {
@@ -514,9 +535,16 @@ public:
       timeStack.back().Time-=timeStack.back().startTime;
       if (timeStack.size()>1){
         timeStack[timeStack.size()-2].childTime+=timeStack.back().Time;
+      }else{
+        topLevelTimeSum+=timeStack.back().Time;
       }
-      if (timeStack.back().isDisplayed) 
+      if (timeStack.back().isDisplayed){ 
         timeMap[timeStack.back().name] += timeStack.back();
+        if (timeStack.size()==1){
+          timeMap[timeStack.back().name].topLevelCnt++; 
+          timeMap[timeStack.back().name].topLevelTime+=timeStack.back().Time; 
+        }
+      }
       timeStack.pop_back();
     }
     /*if (timers.count(s)){
@@ -532,7 +560,7 @@ public:
   virtual void initialize(const Sema & s) override{};
   virtual void finalize(const Sema &) override{};
   virtual void atEnd() override {
-    auto name=getFilename();
+    auto name=fileName;
     if (settings.PrintYAML) {
       auto& osref=makeOSRef(name);
 
@@ -543,26 +571,29 @@ public:
       if (settings.measureTime & 2){
         std::vector<sumTimeInfoData  > times;
         sumTimeInfoData  totalTime{};
-        llvm::errs()<<1;
-        totalTime.name="TotalOverloadTime";
+        totalTime.name="TotalOverloadTime:";
         for (auto& [k,v]: timeMap){
           times.push_back({v,k});
-          totalTime.childTime+=times.back().childTime;
-          totalTime.time +=times.back().time;
+          totalTime.cnt+=times.back().cnt;
+          totalTime.childTime+=times.back().time;
+          //totalTime.time +=times.back().time;
         }
-        llvm::errs()<<2;
+        totalTime.time=topLevelTimeSum.getWallTime();
         std::sort(times.begin(),times.end(),[](const sumTimeInfoData& a, const sumTimeInfoData& b){return a.time>b.time;});
-        llvm::errs()<<3;
-        displayOvInsMap(osref, totalTime);
-        llvm::errs()<<4;
+        //semaTime+=/*llvm::TimeRecord::getCurrentTime(false)-*/semaTime;
+        auto EndTime=llvm::TimeRecord::getCurrentTime(false);
+        EndTime-=semaTime;
+        sumTimeInfoData STime(EndTime,"SemaTime:");
+        displaySumTimeInfoData(osref, STime);
+        displaySumTimeInfoData(osref, totalTime);
         for (auto& t: times){
-          displayOvInsMap(osref, t);
+          displaySumTimeInfoData(osref, t);
         }
-        llvm::errs()<<5;
       }
       osref << "...\n";
       timeMap={};
       outStream->flush();
+      //llvm::errs()<<"YAML printed to "<<name<<"\n ";
     } else {
       llvm::outs()<<name<<":\n";
     if (settings.measureTime != clang::FrontendOptions::SC_OnlyTime)
@@ -577,15 +608,25 @@ public:
   }
   virtual void atOverloadBegin(const Sema &s, const SourceLocation &loc,
                                const OverloadCandidateSet &set) override {
-    S = &s;
-    Set = &set;
     Loc = loc;
+    Set = &set;
+    if (!S){
+      S = &s;
+    }
+    assert (!loc.isInvalid());
+    
+    if (fileName=="") fileName=getFilename();
 
     if (!SetArgMap[&set].valid || SetArgMap[&set].Loc != Set->getLocation()){
       SetArgMap.erase(&set);
       return;
     }
+    /*if (loc.isInvalid())
+    for (const auto& c:set){
+      //if (c.Function) c.Function->dump();
+    }*/
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
+    //if (L.isInvalid())llvm::errs()<<"LI\n";
     unsigned line = L.getLine();
     if ((L.getIncludeLoc().isValid() && !settings.ShowIncludes) ||
         !inSetInterval(line) || (!settings.ShowEmptyOverloads && set.empty()))
@@ -635,6 +676,7 @@ public:
     std::chrono::time_point<std::chrono::steady_clock> ovEndTime;
     if (settings.measureTime)
       ovEndTime = std::chrono::steady_clock().now();
+
     OvInsResNode node;
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
     node.line = L.getLine();
@@ -1047,8 +1089,9 @@ private:
         os << "[]";
       else if (s1 == "?")
         os << "?:";
-      else
+      else if (s1!="")
         os << s1;
+      else os<<"Unknown";//invalid location, fix needed
     }
   }
   std::string getBuiltInOperatorName(const OverloadCandidate &C) const {
@@ -1110,10 +1153,11 @@ private:
         os << str::toString(Cand.Conversions[idx].getKind());
       if (!(Cand.Conversions[idx].isEllipsis() ||
             Cand.Conversions[idx].isStaticObjectArgument())) {
+        auto a = getFromType(Cand.Conversions[idx]);
         os << " ("
-           << getFromType(Cand.Conversions[idx])
-                  .getCanonicalType()
-                  .getAsString()
+           << (a.isNull()?"NULLLLL":
+                  a.getCanonicalType()
+                  .getAsString())
            << Kinds[vk] << " -> "
            << getToType(Cand, idx).getCanonicalType().getAsString();
         std::string temp = getTemplatedParamForConversion(Cand, idx);
@@ -1262,7 +1306,14 @@ private:
   };
   OvInsSource getConversionSource(const SetArgs &setArg, int idx) const {
     if (idx >= 0){
-      return getSrcFromExpr(setArg.inArgs[idx]);//ERROR index
+
+    auto inArgs=setArg.inArgs;
+    if (const auto* IL=llvm::dyn_cast_or_null<InitListExpr>(inArgs.size()==1?inArgs[0]:nullptr)){
+      if (IL->inits().size()){
+        inArgs={IL->inits().begin(),IL->inits().end()};
+      }
+    }
+      return getSrcFromExpr(inArgs[idx]);//ERROR index
     }
     if (const auto *objExpr = setArg.ObjectExpr) {
       if (const auto *unresObjExpr = dyn_cast<UnresolvedMemberExpr>(objExpr)) {
@@ -1280,6 +1331,14 @@ private:
     std::vector<OvInsConvEntry> res(C.Conversions.size());
     const auto callKinds = getCallKinds();
     const SetArgs &setArg = getSetArgs();
+    for (const auto&x:setArg.inArgs){
+    }
+    auto inArgs=setArg.inArgs;
+    if (const auto* IL=llvm::dyn_cast_or_null<InitListExpr>(inArgs.size()==1?inArgs[0]:nullptr)){
+      if (IL->inits().size()){
+        inArgs={IL->inits().begin(),IL->inits().end()};
+      }
+    }
     bool isStaticCall = setArg.ObjectExpr == nullptr && C.IgnoreObjectArgument;
     //if (C.Function && C.Function){isStaticCall=true;}
       //setArg.Loc.printToString(S->getSourceManager())
@@ -1323,7 +1382,7 @@ private:
         path << Kinds[fromKind];
         actual.convInfo = getConversionSeq(conv.Standard);
         if (C.Function && idx != -1 &&
-            !isa<clang::InitListExpr>(setArg.inArgs[idx]))
+            !isa<clang::InitListExpr>(inArgs[idx]))
           path << " -> "
                << C.Function->parameters()[idx+isDeduceThis]
                       ->getType()
@@ -1336,10 +1395,26 @@ private:
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         break;
       case ImplicitConversionSequence::UserDefinedConversion:
-        path << conv.UserDefined.Before.getFromType()
+        /*llvm::errs()<<"----------\n";
+        conv.UserDefined.dump();
+        llvm::errs()<<"\n";
+        conv.UserDefined.Before.dump();
+        llvm::errs()<<"----------\n";*/
+        if (conv.UserDefined.ConversionFunction){
+
+        
+        //conv.UserDefined.dump();
+        //conv.UserDefined.Before.dump();
+        //llvm::errs()<<"------------\n";
+        if (conv.UserDefined.Before.First || conv.UserDefined.Before.Second ||
+            conv.UserDefined.Before.Third)
+          path << conv.UserDefined.Before.getFromType()
                     .getCanonicalType()
                     .getAsString();
-        path << Kinds[fromKind];
+        else{
+          path<<"FT";
+        }
+          path << Kinds[fromKind];
         if (conv.UserDefined.Before.First || conv.UserDefined.Before.Second ||
             conv.UserDefined.Before.Third)
           path << " -> "
@@ -1354,7 +1429,7 @@ private:
                       .getCanonicalType()
                       .getAsString();
         if (C.Function && idx != -1 &&
-            !isa<clang::InitListExpr>(setArg.inArgs[idx]))
+            !isa<clang::InitListExpr>(inArgs[idx]))
           path << " -> "
                << C.Function->parameters()[idx]
                       ->getType()
@@ -1370,6 +1445,9 @@ private:
                << conv.UserDefined.After.getToType(2)
                       .getCanonicalType()
                       .getAsString();
+        }else{
+          path<<"Argregate Initioalization";
+        }
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
         path << conv.Ambiguous.getFromType().getCanonicalType().getAsString();
@@ -1386,6 +1464,7 @@ private:
         actual.convInfo = str::toString(conv.Bad.Kind);
         break;
       }
+
       if (C.Function /*&& !C.IsSurrogate*/) {
         std::string temp = getTemplatedParamForConversion(C, i);
         if (temp != "")
@@ -1509,7 +1588,7 @@ private:
                 specializedArgs[i].structurallyEquals(genericArgs[i]);
         } else
           entry.isExact = false;
-        if (entry.isExact && !C.Best && !inCompare) {
+        if (0 && entry.isExact && !C.Best && !inCompare) {
           static std::set<std::pair<SourceLocation, const FunctionDecl *>> s;
           if (!s.count(std::pair{Loc, x})) {
             s.emplace(Loc, x);
