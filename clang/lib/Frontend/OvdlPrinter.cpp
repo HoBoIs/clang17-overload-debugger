@@ -1,13 +1,20 @@
+#include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
+#include "clang/AST/Type.h"
+#include "clang/Basic/DiagnosticIDs.h"
+#include "clang/Basic/LangOptions.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Frontend/FrontendOptions.h"
 #include "clang/Frontend/OvInsEnumPrints.h"
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/OverloadCallback.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
@@ -31,25 +38,73 @@
 using namespace clang;
 
 namespace {
-
+  std::string printType(const QualType& t){
+    PrintingPolicy pp=LangOptions();
+    pp.adjustForCPlusPlus();
+    std::string res;
+    llvm::raw_string_ostream OS(res);
+    //tp.getTypeClassName();
+    if (auto *InjTy = t->getAs<InjectedClassNameType>()) {
+      InjTy->getDecl()->printName(OS, pp);
+      return res;
+    } else
+      //return t->getTypeClassName();
+      //return t.getDecl()->printName();
+      return t.getAsString(pp);
+  }
+double getTimeOf(const llvm::TimeRecord& tr){
+  return tr.getWallTime();
+}
 struct timeInfo{
   const OverloadCandidateSet* ocs;
   std::string name;
   llvm::TimeRecord startTime;
   llvm::TimeRecord Time;
   llvm::TimeRecord childTime;
+  FunctionDecl* bestFun=nullptr;
   bool isDisplayed=false;
 };
+struct timePartInfo{
+  double Time;
+  double childTime;
+  double topLevelTime;
+  int cnt;
+  int topLevelCnt;
+  timePartInfo()=default;
+  timePartInfo(timePartInfo&&)=default;
+  timePartInfo(const timePartInfo&)=default;
+  timePartInfo(const timeInfo& ti){
+    cnt=1;
+    Time=getTimeOf(ti.Time);
+    childTime=getTimeOf(ti.childTime); 
+  }
+
+  timePartInfo& operator+=(const timeInfo& ti){
+    ++cnt;
+    Time +=getTimeOf(ti.Time);
+    childTime +=getTimeOf( ti.childTime);
+    return *this;
+  }
+};
+
 struct sumTimeInfo{
   llvm::TimeRecord Time;
   llvm::TimeRecord childTime;
   llvm::TimeRecord topLevelTime;
   int cnt=0;
   int topLevelCnt=0;
+  llvm::DenseMap<FunctionDecl*, timePartInfo> M;
   sumTimeInfo& operator+=(const timeInfo& ti){
     Time += ti.Time;
     childTime += ti.childTime;
     ++cnt;
+    auto it=M.find(ti.bestFun);
+    if (it==M.end()){
+      M.insert({ti.bestFun,ti});
+    }else{
+      it->second+=ti;
+    }
+    //TODO top level time and info for subnodes
     return *this;
   }
 };
@@ -58,15 +113,38 @@ struct sumTimeInfoData{
   double topLevelTime=0;
   int cnt,topLevelCnt=0;
   std::string name;
+  //llvm::DenseMap<FunctionDecl*, timePartInfo> subParts;
+  std::vector<std::pair<std::string, timePartInfo>> subParts;
   sumTimeInfoData()=default;
-  sumTimeInfoData(const sumTimeInfo& t, const std::string& n):
-    time(t.Time.getWallTime()),
-    childTime(t.childTime.getWallTime()),
-    topLevelTime(t.topLevelTime.getWallTime()), cnt(t.cnt), 
-    topLevelCnt(t.topLevelCnt), name(n){
+  sumTimeInfoData(const sumTimeInfo& t, const std::string& n,const Sema* s):
+    time(getTimeOf(t.Time)),
+    childTime(getTimeOf(t.childTime)),
+    topLevelTime(getTimeOf(t.topLevelTime)), cnt(t.cnt), 
+    topLevelCnt(t.topLevelCnt), name(n) {
+          PrintingPolicy pp=LangOptions();
+          pp.adjustForCPlusPlus();
+    for (const auto& [k,v]: t.M){
+      std::string tps;
+      if (k){
+        if (auto* m=dyn_cast<CXXMethodDecl>(k)){
+          if (m->isInstance())
+            //tps+=m->getFunctionObjectParameterReferenceType().getAsString(pp)+"(this), ";
+            tps+=printType(m->getFunctionObjectParameterReferenceType())+"(this), ";
+        }
+        for (auto& p:k->parameters()){
+          tps+= printType(p->getType())+", ";
+        }
+      }
+      if (k && !k->getLocation().isInvalid()){
+        PresumedLoc loc=s->getSourceManager().getPresumedLoc(k->getLocation());
+        subParts.emplace_back(tps+";\t"+std::string(loc.getFilename())+":"+std::to_string(loc.getLine())+":"+std::to_string(loc.getColumn()) ,v);
+      }else{
+        subParts.emplace_back(tps+";\tBuilt in",v);
+      }
+    }
   }
   sumTimeInfoData(const llvm::TimeRecord& t, const std::string& n):
-    time(t.getWallTime()),
+    time(getTimeOf(t)),
     childTime{}, cnt(1),name(n){
   }
 };
@@ -110,6 +188,7 @@ struct OvInsCandEntry {
   std::deque<std::string> templateParams;
   bool isSurrogate = false;
   bool isBestOrProblem;
+  bool isADL;
   bool operator==(const OvInsCandEntry &o) const {
     return name == o.name && src == o.src && paramTypes == o.paramTypes &&
            src == o.src && failKind == o.failKind &&
@@ -187,6 +266,8 @@ LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsCompareEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsConvEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsConvCmpEntry);
 LLVM_YAML_IS_SEQUENCE_VECTOR(OvInsTemplateSpec);
+using pairStringTimePartInfo=std::pair<std::string,timePartInfo>;
+LLVM_YAML_IS_SEQUENCE_VECTOR(pairStringTimePartInfo);
 namespace llvm {
 namespace yaml {
 
@@ -227,6 +308,18 @@ template <> struct MappingTraits<sumTimeInfoData> {
     io.mapRequired("child-time",fields.childTime);
     io.mapRequired("top-level-time",fields.topLevelTime);
     io.mapRequired("top-level-count",fields.topLevelCnt);
+
+    io.mapRequired("subParts",fields.subParts);
+  }
+};
+template <> struct MappingTraits<std::pair<std::string,timePartInfo>> {
+  static void mapping(IO &io, std::pair<std::string,timePartInfo> &fields) {
+    io.mapRequired("selected", fields.first);
+    io.mapRequired("count",fields.second.cnt);
+    io.mapRequired("time" ,fields.second.Time);
+    io.mapRequired("child-time",fields.second.childTime);
+    io.mapRequired("top-level-time",fields.second.topLevelTime);
+    io.mapRequired("top-level-count",fields.second.topLevelCnt);
   }
 };
 template <> struct MappingTraits<OvInsCandEntry> {
@@ -238,6 +331,7 @@ template <> struct MappingTraits<OvInsCandEntry> {
     io.mapRequired("declaration", fields.src);
     io.mapOptional("usingLocation", fields.usingLocation, "");
     io.mapOptional("isSurrogate", fields.isSurrogate, false);
+    io.mapOptional("isADL", fields.isADL, false);
     io.mapOptional("templateSpecs", fields.templateSpecs);
     // io.mapOptional("templateSpecs (overloading is decided before
     // specialisation)", fields.templateSpecs);
@@ -304,6 +398,7 @@ std::string getConversionSeq(const UserDefinedConversionSequence &cs) {
 const QualType getFromType(const ImplicitConversionSequence &C) {
   if (!C.isInitialized())
     return {};
+  llvm::errs()<<C.getKind()<<"=K\n";
   switch (C.getKind()) {
   case ImplicitConversionSequence::StandardConversion:
     return C.Standard.getFromType();
@@ -311,8 +406,25 @@ const QualType getFromType(const ImplicitConversionSequence &C) {
     return {};
   case ImplicitConversionSequence::UserDefinedConversion:
     if (C.UserDefined.ConversionFunction)
-      if (C.UserDefined.Before.First || C.UserDefined.Before.Second || C.UserDefined.Before.Third)
-        return C.UserDefined.Before.getFromType();
+      if (C.UserDefined.Before.First || C.UserDefined.Before.Second || C.UserDefined.Before.Third){
+        auto ret= C.UserDefined.Before.getFromType();
+        if (ret.isNull()){
+          llvm::errs()<<"QQQQ\n";
+          ret=C.UserDefined.ConversionFunction->parameters()[0]->getOriginalType();
+        }else{
+          llvm::errs()<<ret.getAsString();
+        }
+        return ret;
+      }else{
+        if (auto* mp=dyn_cast_or_null<CXXMethodDecl>(C.UserDefined.ConversionFunction)){
+          if (auto* ctr = dyn_cast_or_null<CXXConstructorDecl>(mp)){
+            return ctr->getParamDecl(0)->getOriginalType();
+          }else if (auto* convFun=dyn_cast_or_null<CXXConversionDecl>(mp)){
+            return (convFun->getThisType()->getPointeeType());
+          }
+        }else
+          return C.UserDefined.ConversionFunction->parameters()[0]->getOriginalType();
+      }
     return {};
   case ImplicitConversionSequence::AmbiguousConversion:
     return C.Ambiguous.getFromType();
@@ -458,7 +570,15 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     return llvm::outs();
   }
 public:
+  PrintingPolicy pp=LangOptions();
   DefaultOverloadInstCallback(const clang::FrontendOptions::OvInsSettingsType& s): settings(s){
+    pp.adjustForCPlusPlus();
+    pp;
+  /*
+    if (auto *InjTy = ClassType->getAs<InjectedClassNameType>()) {
+      InjTy->getDecl()->printName(OS, Policy);
+      return;
+    */
     /*static int counter=0;
     counter++;
     llvm::errs()<<counter<<"\n";*/
@@ -492,7 +612,23 @@ public:
     if (args.isImplicit && args.name[0]!='$')
        args.name="$ "+args.name+"imp";
     if ((timeStack.empty() || timeStack.back().ocs != &Set)&&(settings.measureTime & 2)){
-      timeStack.push_back(timeInfo{&Set,args.name,llvm::TimeRecord::getCurrentTime()});
+      std::string typenames;
+      /*if (const auto *objExpr = args.ObjectExpr) { 
+        typenames=("|OBJ:"+getObjTypeStr(objExpr));
+      }
+      for (const auto& E :args.inArgs) {
+        typenames+="|"+E->getType().getAsString();
+      }*/
+      timeStack.push_back(timeInfo{&Set,args.name + typenames,llvm::TimeRecord::getCurrentTime()});
+    } else if ((settings.measureTime & 2)){
+      std::string typenames;
+      /*if (const auto *objExpr = args.ObjectExpr) { 
+        typenames=("|OBJ:"+getObjTypeStr(objExpr));
+      }
+      for (const auto& E :args.inArgs) {
+        typenames+="|"+E->getType().getAsString();
+        timeStack.back().name+="$"+typenames;
+      }*/
     }
     /*if (args.name!=""){
       if (0 == timers.count(&Set)){
@@ -543,6 +679,9 @@ public:
         if (timeStack.size()==1){
           timeMap[timeStack.back().name].topLevelCnt++; 
           timeMap[timeStack.back().name].topLevelTime+=timeStack.back().Time; 
+          
+          timeMap[timeStack.back().name].M[timeStack.back().bestFun].topLevelTime+=getTimeOf(timeStack.back().Time);
+          timeMap[timeStack.back().name].M[timeStack.back().bestFun].topLevelCnt++;
         }
       }
       timeStack.pop_back();
@@ -573,12 +712,12 @@ public:
         sumTimeInfoData  totalTime{};
         totalTime.name="TotalOverloadTime:";
         for (auto& [k,v]: timeMap){
-          times.push_back({v,k});
+          times.push_back({v,k,S});
           totalTime.cnt+=times.back().cnt;
           totalTime.childTime+=times.back().time;
           //totalTime.time +=times.back().time;
         }
-        totalTime.time=topLevelTimeSum.getWallTime();
+        totalTime.time=getTimeOf(topLevelTimeSum);
         std::sort(times.begin(),times.end(),[](const sumTimeInfoData& a, const sumTimeInfoData& b){return a.time>b.time;});
         //semaTime+=/*llvm::TimeRecord::getCurrentTime(false)-*/semaTime;
         auto EndTime=llvm::TimeRecord::getCurrentTime(false);
@@ -601,7 +740,7 @@ public:
       cont = {};
     if (settings.measureTime & 2)
       for (const auto& [k,v]:timeMap){
-        llvm::outs()<<k<<": \tcount:\t"<<v.cnt<<"\t overload time:\t"<<v.Time.getWallTime()<<"s\t from this in children: \t"<< v.childTime.getWallTime() <<"s\n";
+        llvm::outs()<<k<<": \tcount:\t"<<v.cnt<<"\t overload time:\t"<<getTimeOf(v.Time)<<"s\t from this in children: \t"<< getTimeOf(v.childTime) <<"s\n";
       }
       timeMap={};
     }
@@ -613,7 +752,9 @@ public:
     if (!S){
       S = &s;
     }
-    assert (!loc.isInvalid());
+    if (loc.isInvalid())
+      return;
+    //assert (!loc.isInvalid());
     
     if (fileName=="") fileName=getFilename();
 
@@ -677,11 +818,27 @@ public:
     if (settings.measureTime)
       ovEndTime = std::chrono::steady_clock().now();
 
-    OvInsResNode node;
     PresumedLoc L = S->getSourceManager().getPresumedLoc(loc);
-    node.line = L.getLine();
-    node.Fname = L.getFilename();
-    node.Entry = getResEntry(ovRes, BestOrProblem);
+    //node.line = L.getLine();
+    //node.Fname = L.getFilename();
+    if (settings.measureTime != FrontendOptions::SC_OnlyTime) {
+      OvInsResNode node;
+      node.line = L.getLine();
+      node.Fname = L.getFilename();
+      node.Entry = getResEntry(ovRes, BestOrProblem);
+      node.Entry.passedTime = (ovEndTime - ovStartTime).count();
+      node.Entry.compares = transformCompares();
+      compareResults={};
+      compares.clear();
+      if (settings.ShowCompares != FrontendOptions::SC_Verbose)
+        filterForRelevant(node.Entry);
+
+      if (settings.SummarizeBuiltInBinOps)
+        summarizeBuiltInBinOps(node.Entry);
+      if ((!node.Entry.isImplicit || settings.ShowImplicitConversions) && nameOk())
+        cont.add(node);
+    }
+    /*node.Entry = getResEntry(ovRes, BestOrProblem);
     node.Entry.passedTime = (ovEndTime - ovStartTime).count();
     node.Entry.compares = transformCompares();
     compareResults={};
@@ -689,12 +846,16 @@ public:
     if (settings.ShowCompares != FrontendOptions::SC_Verbose)
       filterForRelevant(node.Entry);
     if (settings.SummarizeBuiltInBinOps)
-      summarizeBuiltInBinOps(node.Entry);
-    if ((!node.Entry.isImplicit || settings.ShowImplicitConversions) && nameOk())
-      cont.add(node);
-    else
-      if (!timeStack.empty() && timeStack.back().ocs== Set)
-	      timeStack.back().isDisplayed=false;
+      summarizeBuiltInBinOps(node.Entry);*/
+    if (!timeStack.empty() && timeStack.back().ocs== Set && getSetArgs().isImplicit && ! settings.ShowImplicitConversions){
+	    timeStack.back().isDisplayed=false;
+      if (ovRes==clang::OR_Success){
+        timeStack.back().bestFun=BestOrProblem->Function;
+      /*for (auto& x :BestOrProblem->Function->parameters()){
+        x->getType().getAsString();
+      }*/
+      }
+    }
 
     inBestOC = false;
   }
@@ -702,6 +863,8 @@ public:
                                       const OverloadCandidate &C1,
                                       const OverloadCandidate &C2) override {
     if (!inBestOC || !settings.ShowCompares)
+      return;
+    if (settings.measureTime == FrontendOptions::SC_OnlyTime)
       return;
     inCompare = true;
     if (settings.measureTime)
@@ -936,6 +1099,10 @@ private:
                 ? "\n\tFailure reason: " + str::toString(*Entry.failKind)
                 : "")
         << (Entry.extraFailInfo ? *Entry.extraFailInfo : "") << Entry.src.range;
+    if (Entry.isADL){
+      unsigned IDADL=S->Diags.getDiagnosticIDs()->getCustomDiagID(DiagnosticIDs::Note, "Came from ADL");
+      S->Diags.Report(Entry.src.Loc, IDADL);
+    }
     unsigned IDusingNote = S->Diags.getDiagnosticIDs()->getCustomDiagID(
         DiagnosticIDs::Note, "using from here");
     if (Entry.usingLoc != SourceLocation{})
@@ -1156,10 +1323,9 @@ private:
         auto a = getFromType(Cand.Conversions[idx]);
         os << " ("
            << (a.isNull()?"NULLLLL":
-                  a.getCanonicalType()
-                  .getAsString())
+                  a.getCanonicalType().getAsString(pp))
            << Kinds[vk] << " -> "
-           << getToType(Cand, idx).getCanonicalType().getAsString();
+           << getToType(Cand, idx).getCanonicalType().getAsString(pp);
         std::string temp = getTemplatedParamForConversion(Cand, idx);
         if (temp != "")
           os << " = " << temp;
@@ -1264,9 +1430,9 @@ private:
           continue;
         if (C.Conversions[i].isBad()) {
           os << str::toString(C.Conversions[i].Bad.Kind) << " Pos: " << (1 + i)
-             << "    From: " << C.Conversions[i].Bad.getFromType().getAsString()
+             << "    From: " << C.Conversions[i].Bad.getFromType().getAsString(pp)
              << Kinds[getCallKinds()[i - C.IgnoreObjectArgument]]
-             << "    To: " << C.Conversions[i].Bad.getToType().getAsString();
+             << "    To: " << C.Conversions[i].Bad.getToType().getAsString(pp);
           return res;
         }
       }
@@ -1331,8 +1497,6 @@ private:
     std::vector<OvInsConvEntry> res(C.Conversions.size());
     const auto callKinds = getCallKinds();
     const SetArgs &setArg = getSetArgs();
-    for (const auto&x:setArg.inArgs){
-    }
     auto inArgs=setArg.inArgs;
     if (const auto* IL=llvm::dyn_cast_or_null<InitListExpr>(inArgs.size()==1?inArgs[0]:nullptr)){
       if (IL->inits().size()){
@@ -1378,7 +1542,7 @@ private:
       actual.kind = str::toString(conv.getKind());
       switch (conv.getKind()) {
       case ImplicitConversionSequence::StandardConversion:
-        path << conv.Standard.getFromType().getCanonicalType().getAsString();
+        path << conv.Standard.getFromType().getCanonicalType().getAsString(pp);
         path << Kinds[fromKind];
         actual.convInfo = getConversionSeq(conv.Standard);
         if (C.Function && idx != -1 &&
@@ -1387,10 +1551,10 @@ private:
                << C.Function->parameters()[idx+isDeduceThis]
                       ->getType()
                       .getCanonicalType()
-                      .getAsString();
+                      .getAsString(pp);
         else
           path << " -> "
-               << conv.Standard.getToType(2).getCanonicalType().getAsString();
+               << conv.Standard.getToType(2).getCanonicalType().getAsString(pp);
         break;
       case ImplicitConversionSequence::StaticObjectArgumentConversion:
         break;
@@ -1410,7 +1574,7 @@ private:
             conv.UserDefined.Before.Third)
           path << conv.UserDefined.Before.getFromType()
                     .getCanonicalType()
-                    .getAsString();
+                    .getAsString(pp);
         else{
           path<<"FT";
         }
@@ -1420,47 +1584,47 @@ private:
           path << " -> "
                << conv.UserDefined.Before.getToType(2)
                       .getCanonicalType()
-                      .getAsString();
+                      .getAsString(pp);
         actual.convInfo = getConversionSeq(conv.UserDefined);
         if (conv.UserDefined.After.First || conv.UserDefined.After.Second ||
             conv.UserDefined.After.Third)
           path << " -> "
                << conv.UserDefined.After.getFromType()
                       .getCanonicalType()
-                      .getAsString();
+                      .getAsString(pp);
         if (C.Function && idx != -1 &&
             !isa<clang::InitListExpr>(inArgs[idx]))
           path << " -> "
                << C.Function->parameters()[idx]
                       ->getType()
                       .getCanonicalType()
-                      .getAsString();
+                      .getAsString(pp);
         else if (C.IsSurrogate && idx == -1)
           path << " -> "
                << conv.UserDefined.ConversionFunction->getReturnType()
                       .getCanonicalType()
-                      .getAsString();
+                      .getAsString(pp);
         else
           path << " -> "
                << conv.UserDefined.After.getToType(2)
                       .getCanonicalType()
-                      .getAsString();
+                      .getAsString(pp);
         }else{
           path<<"Argregate Initioalization";
         }
         break;
       case ImplicitConversionSequence::AmbiguousConversion:
-        path << conv.Ambiguous.getFromType().getCanonicalType().getAsString();
+        path << conv.Ambiguous.getFromType().getCanonicalType().getAsString(pp);
         path << Kinds[fromKind];
         path << " -> "
-             << conv.Ambiguous.getToType().getCanonicalType().getAsString();
+             << conv.Ambiguous.getToType().getCanonicalType().getAsString(pp);
         break;
       case ImplicitConversionSequence::EllipsisConversion:
         break;
       case ImplicitConversionSequence::BadConversion:
-        path << conv.Bad.getFromType().getCanonicalType().getAsString();
+        path << conv.Bad.getFromType().getCanonicalType().getAsString(pp);
         path << Kinds[fromKind];
-        path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString();
+        path << " -> " << conv.Bad.getToType().getCanonicalType().getAsString(pp);
         actual.convInfo = str::toString(conv.Bad.Kind);
         break;
       }
@@ -1501,16 +1665,17 @@ private:
     const auto *fptr =
         ty->getAs<PointerType>()->getPointeeType()->getAs<FunctionProtoType>();
     res.emplace_back(
-        getSetArgs().ObjectExpr->getType().getCanonicalType().getAsString() +
+        getSetArgs().ObjectExpr->getType().getCanonicalType().getAsString(pp) +
         "=*this");
     for (const auto &t : fptr->getParamTypes())
-      res.emplace_back(t.getCanonicalType().getAsString());
+      res.emplace_back(t.getCanonicalType().getAsString(pp));
 
     return res;
   }
   OvInsCandEntry getCandEntry(const OverloadCandidate &C) const {
     OvInsCandEntry res;
     res.isBestOrProblem = C.Best;
+    res.isADL=C.IsADLCandidate==clang::CallExpr::ADLCallKind::UsesADL;
     llvm::raw_string_ostream usingLoc(res.usingLocation);
     if (settings.ShowConversions) {
       res.Conversions = getConversions(C); // FIXME
@@ -1543,7 +1708,7 @@ private:
         res.name = getBuiltInOperatorName(C);
       for (const auto &tmp : C.BuiltinParamTypes)
         if (tmp != QualType{})
-          res.paramTypes.push_back(tmp.getAsString());
+          res.paramTypes.push_back(tmp.getAsString(pp));
       return res;
     }
     if (isa<UsingShadowDecl>(C.FoundDecl.getDecl())) {
@@ -1557,7 +1722,7 @@ private:
       res.src = getSource(C);
       if (isTemplatedFun(C) && settings.ShowTemplateSpecs) {
         res.templateSpecs = getSpecializations(C);
-        res.templateParams = getTemplateParams(C);
+        res.templateParams = getTemplateParams(C.Function);
       }
     }
     return res;
@@ -1695,15 +1860,16 @@ private:
     if (i < 0)
       return {};
     if ((unsigned)i < params.size() && params[i]->isTemplated())
-      return params[i]->getType().getAsString();
+      return params[i]->getType().getAsString(pp);
     return {};
   }
-  std::deque<std::string> getTemplateParams(const OverloadCandidate &C) const {
-    std::deque<std::string> res;
-    if (C.Function == nullptr)
+  //std::deque<std::string> getTemplateParams(const OverloadCandidate &C) const {
+  std::deque<std::string> getTemplateParams(const FunctionDecl* fun) const {
+    std::deque<std::string> res;//TEMPPARAM
+    if (fun == nullptr)
       return {};
-    const auto *templateArgs = C.Function->getTemplateSpecializationArgs();
-    if (auto *ptemplates = C.Function->getPrimaryTemplate())
+    const auto *templateArgs = fun->getTemplateSpecializationArgs();
+    if (auto *ptemplates = fun->getPrimaryTemplate())
       if (ptemplates->getTemplateParameters())
         for (size_t i = 0; i < templateArgs->size(); ++i) {
           res.push_back({});
@@ -1738,12 +1904,12 @@ private:
     const auto types = getSignatureTypes(C);
     size_t i = 0;
     if (getThisType(C) != QualType{} && !llvm::dyn_cast<CXXMethodDecl>(C.Function)->isExplicitObjectMemberFunction()) {
-      res.push_back(getThisType(C).getCanonicalType().getAsString() + "=this");
+      res.push_back(getThisType(C).getCanonicalType().getAsString(pp) + "=this");
       ++i;
     }
     for (; i < types.size(); i++) {
       const auto &[type, isDefaulted] = types[i];
-      res.push_back(type.getCanonicalType().getAsString() +
+      res.push_back(type.getCanonicalType().getAsString(pp) +
                     (isDefaulted ? "=default" : ""));
     }
     if (C.Function && C.Function->getEllipsisLoc() != SourceLocation())
@@ -1785,8 +1951,8 @@ private:
   };
   std::string getObjTypeStr(const Expr *Oe) const {
     if (const auto *UOe = llvm::dyn_cast<UnresolvedMemberExpr>(Oe))
-      return UOe->getBaseType().getCanonicalType().getAsString();
-    return Oe->getType().getCanonicalType().getAsString();
+      return UOe->getBaseType().getCanonicalType().getAsString(pp);
+    return Oe->getType().getCanonicalType().getAsString(pp);
   }
   std::deque<std::string> getCallTypes(ArrayRef<Expr *> Args) const {
     std::deque<std::string> res;
@@ -1798,7 +1964,7 @@ private:
       else if (isa<clang::InitListExpr>(x))
         res.push_back("InitizerList");
       else
-        res.push_back(x->getType().getCanonicalType().getAsString());
+        res.push_back(x->getType().getCanonicalType().getAsString(pp));
     }
 
     const auto callKinds = getCallKinds();

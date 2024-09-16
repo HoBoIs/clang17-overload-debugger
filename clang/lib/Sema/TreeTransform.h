@@ -30,6 +30,7 @@
 #include "clang/AST/StmtOpenMP.h"
 #include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/OpenMPKinds.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Sema/Designator.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Lookup.h"
@@ -12201,6 +12202,25 @@ TreeTransform<Derived>::TransformCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
     // FIXME: Poor location information
     SourceLocation FakeLParenLoc = SemaRef.getLocForEndOfToken(
         static_cast<Expr *>(Object.get())->getEndLoc());
+    SourceLocation  FakeLParaenLoc2=SemaRef.getLocForEndOfToken(E->getArgs()[0]->getEndLoc(),0);
+    assert(FakeLParenLoc.isInvalid() || FakeLParenLoc==FakeLParaenLoc2);
+    FakeLParenLoc=FakeLParaenLoc2;
+    if (FakeLParenLoc.isInvalid()){
+      if (E->getNumArgs()>1){
+        FakeLParenLoc=E->getArgs()[1]->getBeginLoc();
+      }else{
+        FakeLParenLoc=E->getOperatorLoc();
+      }
+    }
+    /*if (FakeLParenLoc.isInvalid()){
+      Object.get()->dump();
+      auto a=static_cast<Expr *>(Object.get())->getEndLoc();
+      llvm::errs()<<a.isInvalid()<<"=inv\n";
+      a.dump(SemaRef.getSourceManager());
+      llvm::errs()<<"- - - - -\n";
+(Object.get())->getBeginLoc().dump(SemaRef.getSourceManager());
+      llvm::errs()<<"=========\n";
+    }*/
 
     // Transform the call arguments.
     SmallVector<Expr*, 8> Args;

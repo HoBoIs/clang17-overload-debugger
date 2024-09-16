@@ -9973,7 +9973,7 @@ Sema::AddArgumentDependentLookupCandidates(DeclarationName Name,
                                            OverloadCandidateSet& CandidateSet,
                                            bool PartialOverloading) {
   ADLResult Fns;
-
+//ADL here!!!
   // FIXME: This approach for uniquing ADL results (and removing
   // redundant candidates from the set) relies on pointer-equality,
   // which means we need to key off the canonical decl.  However,
@@ -15218,6 +15218,7 @@ ExprResult Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
       return ExprError();
     // Can't add any actual overloads yet
 
+    //ADD LLoc
     return CXXOperatorCallExpr::Create(Context, OO_Subscript, Fn.get(), Args,
                                        Context.DependentTy, VK_PRValue, RLoc,
                                        CurFPFeatureOverrides());
@@ -15299,6 +15300,7 @@ ExprResult Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
         ExprValueKind VK = Expr::getValueKindForType(ResultTy);
         ResultTy = ResultTy.getNonLValueExprType(Context);
 
+        //ADD LLoc
         CallExpr *TheCall = CXXOperatorCallExpr::Create(
             Context, OO_Subscript, FnExpr.get(), MethodArgs, ResultTy, VK, RLoc,
             CurFPFeatureOverrides());
@@ -15977,6 +15979,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Obj,
   ExprValueKind VK = Expr::getValueKindForType(ResultTy);
   ResultTy = ResultTy.getNonLValueExprType(Context);
 
+  //ADD LParenLoc
   CallExpr *TheCall = CXXOperatorCallExpr::Create(
       Context, OO_Call, NewFn.get(), MethodArgs, ResultTy, VK, RParenLoc,
       CurFPFeatureOverrides());
