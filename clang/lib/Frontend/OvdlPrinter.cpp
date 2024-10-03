@@ -55,21 +55,72 @@ namespace {
 double getTimeOf(const llvm::TimeRecord& tr){
   return tr.getWallTime();
 }
+struct BestFunInfo{
+  bool succsess=false;
+  FunctionDecl* funPtr=nullptr;
+  QualType builtInTypes[2];
+  bool operator==(const BestFunInfo& o)const{
+    if (!succsess) return !o.succsess;
+    if (!o.succsess) return false;
+    if (funPtr!=o.funPtr) return false;
+    if (funPtr) return true;
+    return builtInTypes[0]==o.builtInTypes[0] && builtInTypes[1]==o.builtInTypes[1];
+  }
+  bool operator<(const BestFunInfo& o)const{
+    if (!succsess) return false;
+    if (succsess && !o.succsess) return true;
+    if (funPtr != o.funPtr) return std::less<FunctionDecl*>()(funPtr, o.funPtr);
+    if (funPtr) return false;
+    if (builtInTypes[0]==o.builtInTypes[0]){
+      return builtInTypes[1]<o.builtInTypes[1];
+    }
+    return builtInTypes[0]<o.builtInTypes[0];
+  }
+  std::string printToString(const PrintingPolicy &Policy, const Sema* s)const{
+    std::string res;
+    llvm::raw_string_ostream os(res);
+    if (!succsess) {
+      res="FAIL";
+      return res;
+    }
+    if (funPtr){
+      if (auto* m=dyn_cast<CXXMethodDecl>(funPtr)){
+        if (m->isInstance())
+            //tps+=m->getFunctionObjectParameterReferenceType().getAsString(pp)+"(this), ";
+            os<<printType(m->getFunctionObjectParameterReferenceType())+"(this), ";
+      }
+      for (auto& p:funPtr->parameters()){
+        os << printType(p->getType())+", ";
+      }
+      if (!funPtr->getLocation().isInvalid()){
+        PresumedLoc loc=s->getSourceManager().getPresumedLoc(funPtr->getLocation());
+        os<<";"<<loc.getFilename()<<":"<<loc.getLine();
+      }
+    }else{
+      builtInTypes[0].print(os, Policy);
+      os<<" ";
+      builtInTypes[1].print(os, Policy);
+      os<<"; BuiltIn"; 
+    }
+    return res;
+  }
+
+};
 struct timeInfo{
   const OverloadCandidateSet* ocs;
   std::string name;
   llvm::TimeRecord startTime;
   llvm::TimeRecord Time;
   llvm::TimeRecord childTime;
-  FunctionDecl* bestFun=nullptr;
+  BestFunInfo bestFun;
   bool isDisplayed=false;
 };
 struct timePartInfo{
-  double Time;
-  double childTime;
-  double topLevelTime;
-  int cnt;
-  int topLevelCnt;
+  double Time=0;
+  double childTime=0;
+  double topLevelTime=0;
+  int cnt=0;
+  int topLevelCnt=0;
   timePartInfo()=default;
   timePartInfo(timePartInfo&&)=default;
   timePartInfo(const timePartInfo&)=default;
@@ -93,7 +144,8 @@ struct sumTimeInfo{
   llvm::TimeRecord topLevelTime;
   int cnt=0;
   int topLevelCnt=0;
-  llvm::DenseMap<FunctionDecl*, timePartInfo> M;
+  std::map<BestFunInfo, timePartInfo> M;
+  //llvm::DenseMap<BestFunInfo, timePartInfo> M;
   sumTimeInfo& operator+=(const timeInfo& ti){
     Time += ti.Time;
     childTime += ti.childTime;
@@ -109,9 +161,9 @@ struct sumTimeInfo{
   }
 };
 struct sumTimeInfoData{
-  double time,childTime;
+  double time=0,childTime=0;
   double topLevelTime=0;
-  int cnt,topLevelCnt=0;
+  int cnt=0,topLevelCnt=0;
   std::string name;
   //llvm::DenseMap<FunctionDecl*, timePartInfo> subParts;
   std::vector<std::pair<std::string, timePartInfo>> subParts;
@@ -121,11 +173,11 @@ struct sumTimeInfoData{
     childTime(getTimeOf(t.childTime)),
     topLevelTime(getTimeOf(t.topLevelTime)), cnt(t.cnt), 
     topLevelCnt(t.topLevelCnt), name(n) {
-          PrintingPolicy pp=LangOptions();
+          PrintingPolicy pp=s->getLangOpts();
           pp.adjustForCPlusPlus();
     for (const auto& [k,v]: t.M){
       std::string tps;
-      if (k){
+      /*if (k){
         if (auto* m=dyn_cast<CXXMethodDecl>(k)){
           if (m->isInstance())
             //tps+=m->getFunctionObjectParameterReferenceType().getAsString(pp)+"(this), ";
@@ -140,7 +192,8 @@ struct sumTimeInfoData{
         subParts.emplace_back(tps+";\t"+std::string(loc.getFilename())+":"+std::to_string(loc.getLine())+":"+std::to_string(loc.getColumn()) ,v);
       }else{
         subParts.emplace_back(tps+";\tBuilt in",v);
-      }
+      }*/
+      subParts.emplace_back(k.printToString(pp, s),v);
     }
   }
   sumTimeInfoData(const llvm::TimeRecord& t, const std::string& n):
@@ -405,7 +458,7 @@ const QualType getFromType(const ImplicitConversionSequence &C) {
   case ImplicitConversionSequence::StaticObjectArgumentConversion:
     return {};
   case ImplicitConversionSequence::UserDefinedConversion:
-    if (C.UserDefined.ConversionFunction)
+    if (C.UserDefined.ConversionFunction){
       if (C.UserDefined.Before.First || C.UserDefined.Before.Second || C.UserDefined.Before.Third){
         auto ret= C.UserDefined.Before.getFromType();
         if (ret.isNull()){
@@ -425,6 +478,7 @@ const QualType getFromType(const ImplicitConversionSequence &C) {
         }else
           return C.UserDefined.ConversionFunction->parameters()[0]->getOriginalType();
       }
+    }
     return {};
   case ImplicitConversionSequence::AmbiguousConversion:
     return C.Ambiguous.getFromType();
@@ -560,7 +614,9 @@ class DefaultOverloadInstCallback : public OverloadCallback {
 
     if (outStream==std::nullopt){
       std::error_code EC;
-      outStream.emplace((name+".yaml").str(),EC,llvm::sys::fs::CD_CreateAlways );
+      outStream.emplace((name+".__.yaml").str(),EC,llvm::sys::fs::CD_CreateAlways );
+      llvm::raw_fd_ostream dler((name+".yaml").str(),EC,llvm::sys::fs::CD_CreateAlways);
+      dler<<"NULL";
       if (EC){
         outStream=std::nullopt;
         llvm::errs()<<"EC IS TRUE\n";
@@ -849,11 +905,10 @@ public:
       summarizeBuiltInBinOps(node.Entry);*/
     if (!timeStack.empty() && timeStack.back().ocs== Set && getSetArgs().isImplicit && ! settings.ShowImplicitConversions){
 	    timeStack.back().isDisplayed=false;
+    }
+    if (!timeStack.empty() && timeStack.back().ocs== Set){
       if (ovRes==clang::OR_Success){
-        timeStack.back().bestFun=BestOrProblem->Function;
-      /*for (auto& x :BestOrProblem->Function->parameters()){
-        x->getType().getAsString();
-      }*/
+        timeStack.back().bestFun={true,BestOrProblem->Function,{BestOrProblem->BuiltinParamTypes[0],BestOrProblem->BuiltinParamTypes[1]}};
       }
     }
 
