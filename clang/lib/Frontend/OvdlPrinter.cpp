@@ -38,27 +38,30 @@
 using namespace clang;
 
 namespace {
-  std::string printType(const QualType& t){
-    PrintingPolicy pp=LangOptions();
-    pp.adjustForCPlusPlus();
-    std::string res;
-    llvm::raw_string_ostream OS(res);
-    //tp.getTypeClassName();
-    if (auto *InjTy = t->getAs<InjectedClassNameType>()) {
-      InjTy->getDecl()->printName(OS, pp);
-      return res;
-    } else
-      //return t->getTypeClassName();
-      //return t.getDecl()->printName();
-      return t.getAsString(pp);
-  }
+std::string printType(const QualType& t){
+  PrintingPolicy pp=LangOptions();
+  pp.adjustForCPlusPlus();
+  std::string res;
+  llvm::raw_string_ostream OS(res);
+  //tp.getTypeClassName();
+  if (auto *InjTy = t->getAs<InjectedClassNameType>()) {
+    InjTy->getDecl()->printName(OS, pp);
+    return res;
+  } 
+  //return t->getTypeClassName();
+  //return t.getDecl()->printName();
+  return t.getAsString(pp);
+}
 double getTimeOf(const llvm::TimeRecord& tr){
   return tr.getWallTime();
 }
+
 struct BestFunInfo{
-  bool succsess=false;
   FunctionDecl* funPtr=nullptr;
   QualType builtInTypes[2];
+  SourceLocation sl;
+  bool succsess=false;
+  bool surrogate=false;
   bool operator==(const BestFunInfo& o)const{
     if (!succsess) return !o.succsess;
     if (!o.succsess) return false;
@@ -86,7 +89,6 @@ struct BestFunInfo{
     if (funPtr){
       if (auto* m=dyn_cast<CXXMethodDecl>(funPtr)){
         if (m->isInstance())
-            //tps+=m->getFunctionObjectParameterReferenceType().getAsString(pp)+"(this), ";
             os<<printType(m->getFunctionObjectParameterReferenceType())+"(this), ";
       }
       for (auto& p:funPtr->parameters()){
@@ -105,6 +107,69 @@ struct BestFunInfo{
     return res;
   }
 
+};
+struct BestFunClass{
+  enum OvResFunKind{
+    System,
+    Enum,
+    Local,
+    Other,
+    Builtin,
+    Surrogate
+  };
+  bool isLocal(const StringRef s){
+    return s.contains("BuildTest");
+  }
+  OvResFunKind choosen=Other;
+  OvResFunKind Loc=Enum;
+  BestFunClass()=default;
+  BestFunClass(const BestFunClass&)=default;
+  BestFunClass(BestFunClass&&)=default;
+  BestFunClass(const BestFunInfo& c, const SourceManager& SM){
+    if (!c.succsess)return;
+    if (SM.isInSystemHeader(c.sl)){
+      Loc=System;
+    }else{
+      if (isLocal(SM.getFilename(c.sl))){
+        Loc=Local;
+      }else{
+        Loc=Other;
+      }
+    }
+    if (c.funPtr){
+      if (SM.isInSystemHeader(c.funPtr->getLocation())){
+        choosen=System;
+      }else{
+        if (isLocal(SM.getFilename(c.funPtr->getLocation()))){
+          choosen=Local;
+        }else{
+          choosen=Other;
+        }
+      }
+    }else{
+      if (c.surrogate)
+        choosen=Surrogate;
+      else if (c.builtInTypes[0]->isEnumeralType()){
+        choosen=Enum;
+      }else{
+        choosen=Builtin;
+      }
+    }
+  }
+  void print(llvm::raw_string_ostream& os)const{
+    if (Loc==Enum){
+      os<<"FAIL";
+      return;
+    }
+    constexpr llvm::StringLiteral names[] = {"System","Enum","Local","Lib","BuiltIn","Surrogate"};
+    os<<names[choosen]<<' '<<names[Loc];
+  }
+  std::string printToString()const{
+    std::string s;
+    llvm::raw_string_ostream os(s);
+    print(os);
+    return s;
+  }
 };
 struct timeInfo{
   const OverloadCandidateSet* ocs;
@@ -176,8 +241,8 @@ struct sumTimeInfoData{
           PrintingPolicy pp=s->getLangOpts();
           pp.adjustForCPlusPlus();
     for (const auto& [k,v]: t.M){
-      std::string tps;
-      /*if (k){
+      /*std::string tps;
+      if (k){
         if (auto* m=dyn_cast<CXXMethodDecl>(k)){
           if (m->isInstance())
             //tps+=m->getFunctionObjectParameterReferenceType().getAsString(pp)+"(this), ";
@@ -193,7 +258,7 @@ struct sumTimeInfoData{
       }else{
         subParts.emplace_back(tps+";\tBuilt in",v);
       }*/
-      subParts.emplace_back(k.printToString(pp, s),v);
+      subParts.emplace_back(BestFunClass(k,s->getSourceManager()).printToString(),v);
     }
   }
   sumTimeInfoData(const llvm::TimeRecord& t, const std::string& n):
@@ -629,7 +694,6 @@ public:
   PrintingPolicy pp=LangOptions();
   DefaultOverloadInstCallback(const clang::FrontendOptions::OvInsSettingsType& s): settings(s){
     pp.adjustForCPlusPlus();
-    pp;
   /*
     if (auto *InjTy = ClassType->getAs<InjectedClassNameType>()) {
       InjTy->getDecl()->printName(OS, Policy);
@@ -757,6 +821,7 @@ public:
   virtual void atEnd() override {
     auto name=fileName;
     if (settings.PrintYAML) {
+      auto PrintStartTime=llvm::TimeRecord::getCurrentTime();
       auto& osref=makeOSRef(name);
 
     if (settings.measureTime != clang::FrontendOptions::SC_OnlyTime)
@@ -784,6 +849,11 @@ public:
         for (auto& t: times){
           displaySumTimeInfoData(osref, t);
         }
+        auto printEndTime= llvm::TimeRecord::getCurrentTime(false);
+        printEndTime-=PrintStartTime;
+        sumTimeInfoData pt(printEndTime,"PrintTime:");
+        displaySumTimeInfoData(osref, pt);
+
       }
       osref << "...\n";
       timeMap={};
@@ -908,7 +978,8 @@ public:
     }
     if (!timeStack.empty() && timeStack.back().ocs== Set){
       if (ovRes==clang::OR_Success){
-        timeStack.back().bestFun={true,BestOrProblem->Function,{BestOrProblem->BuiltinParamTypes[0],BestOrProblem->BuiltinParamTypes[1]}};
+        //HERE
+        timeStack.back().bestFun={BestOrProblem->Function,{BestOrProblem->BuiltinParamTypes[0],BestOrProblem->BuiltinParamTypes[1]},loc,true,BestOrProblem->IsSurrogate};
       }
     }
 

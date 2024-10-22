@@ -2057,7 +2057,7 @@ template <typename T> struct StdMapStringCustomMappingTraitsImpl {
           !std::is_same_v<TYPE, llvm::StringRef>,                              \
       "only use LLVM_YAML_IS_SEQUENCE_VECTOR for types you control");          \
   template <> struct SequenceElementTraits<TYPE> {                             \
-    static const bool flow = FLOW;                                             \
+    [[maybe_unused]]static const bool flow = FLOW;                                             \
   };                                                                           \
   }                                                                            \
   }
