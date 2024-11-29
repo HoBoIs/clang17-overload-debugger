@@ -125,6 +125,8 @@ struct BestFunClass{
   BestFunClass()=default;
   BestFunClass(const BestFunClass&)=default;
   BestFunClass(BestFunClass&&)=default;
+  BestFunClass& operator=(const BestFunClass&)=default;
+  BestFunClass& operator=(BestFunClass&&)=default;
   BestFunClass(const BestFunInfo& c, const SourceManager& SM){
     if (!c.succsess)return;
     if (SM.isInSystemHeader(c.sl)){
@@ -187,6 +189,8 @@ struct timePartInfo{
   int cnt=0;
   int topLevelCnt=0;
   timePartInfo()=default;
+  timePartInfo& operator=(timePartInfo&&)=default;
+  timePartInfo& operator=(const timePartInfo&)=default;
   timePartInfo(timePartInfo&&)=default;
   timePartInfo(const timePartInfo&)=default;
   timePartInfo(const timeInfo& ti){
@@ -233,6 +237,10 @@ struct sumTimeInfoData{
   //llvm::DenseMap<FunctionDecl*, timePartInfo> subParts;
   std::vector<std::pair<std::string, timePartInfo>> subParts;
   sumTimeInfoData()=default;
+  sumTimeInfoData(sumTimeInfoData&&)=default;
+  sumTimeInfoData(const sumTimeInfoData&)=default;
+  sumTimeInfoData& operator=(sumTimeInfoData&&)=default;
+  sumTimeInfoData& operator=(const sumTimeInfoData&)=default;
   sumTimeInfoData(const sumTimeInfo& t, const std::string& n,const Sema* s):
     time(getTimeOf(t.Time)),
     childTime(getTimeOf(t.childTime)),
@@ -680,8 +688,6 @@ class DefaultOverloadInstCallback : public OverloadCallback {
     if (outStream==std::nullopt){
       std::error_code EC;
       outStream.emplace((name+".__.yaml").str(),EC,llvm::sys::fs::CD_CreateAlways );
-      llvm::raw_fd_ostream dler((name+".yaml").str(),EC,llvm::sys::fs::CD_CreateAlways);
-      dler<<"NULL";
       if (EC){
         outStream=std::nullopt;
         llvm::errs()<<"EC IS TRUE\n";
@@ -706,6 +712,7 @@ public:
   }
   virtual void addSetInfo(const OverloadCandidateSet &Set,
                           const SetInfo &S) override {
+    if (!timeStack.empty())return;
     SetArgMap[&Set].Set = &Set;
     auto& args=SetArgMap[&Set];
     if (args.valid && args.Loc != Set.getLocation()) {
@@ -732,6 +739,7 @@ public:
     if (args.isImplicit && args.name[0]!='$')
        args.name="$ "+args.name+"imp";
     if ((timeStack.empty() || timeStack.back().ocs != &Set)&&(settings.measureTime & 2)){
+    //if ((timeStack.empty() /*|| timeStack.back().ocs != &Set*/)&&(settings.measureTime & 2)){
       std::string typenames;
       /*if (const auto *objExpr = args.ObjectExpr) { 
         typenames=("|OBJ:"+getObjTypeStr(objExpr));
@@ -803,6 +811,10 @@ public:
           timeMap[timeStack.back().name].M[timeStack.back().bestFun].topLevelTime+=getTimeOf(timeStack.back().Time);
           timeMap[timeStack.back().name].M[timeStack.back().bestFun].topLevelCnt++;
         }
+      }else{
+        /*llvm::errs()<<timeStack.back().name<<" \t";
+        timeStack.back().ocs->getLocation().dump(s->getSema().getSourceManager());
+        llvm::errs()<<"---\n";*/
       }
       timeStack.pop_back();
     }
@@ -882,7 +894,6 @@ public:
       return;
     //assert (!loc.isInvalid());
     
-    if (fileName=="") fileName=getFilename();
 
     if (!SetArgMap[&set].valid || SetArgMap[&set].Loc != Set->getLocation()){
       SetArgMap.erase(&set);
@@ -916,6 +927,7 @@ public:
 
     using Seconds = std::chrono::duration<double, std::ratio<1>>;
     double startTime = Seconds(now.time_since_epoch()).count();*/
+    if (fileName=="") fileName=getFilename();
     if (settings.measureTime )
       ovStartTime = std::chrono::steady_clock().now();
   }
@@ -974,6 +986,7 @@ public:
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);*/
     if (!timeStack.empty() && timeStack.back().ocs== Set && getSetArgs().isImplicit && ! settings.ShowImplicitConversions){
+      llvm::errs()<<"AAA\n";
 	    timeStack.back().isDisplayed=false;
     }
     if (!timeStack.empty() && timeStack.back().ocs== Set){
