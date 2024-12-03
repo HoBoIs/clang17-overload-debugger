@@ -524,7 +524,6 @@ std::string getConversionSeq(const UserDefinedConversionSequence &cs) {
 const QualType getFromType(const ImplicitConversionSequence &C) {
   if (!C.isInitialized())
     return {};
-  llvm::errs()<<C.getKind()<<"=K\n";
   switch (C.getKind()) {
   case ImplicitConversionSequence::StandardConversion:
     return C.Standard.getFromType();
@@ -535,10 +534,8 @@ const QualType getFromType(const ImplicitConversionSequence &C) {
       if (C.UserDefined.Before.First || C.UserDefined.Before.Second || C.UserDefined.Before.Third){
         auto ret= C.UserDefined.Before.getFromType();
         if (ret.isNull()){
-          llvm::errs()<<"QQQQ\n";
           ret=C.UserDefined.ConversionFunction->parameters()[0]->getOriginalType();
         }else{
-          llvm::errs()<<ret.getAsString();
         }
         return ret;
       }else{
@@ -690,7 +687,7 @@ class DefaultOverloadInstCallback : public OverloadCallback {
       outStream.emplace((name+".__.yaml").str(),EC,llvm::sys::fs::CD_CreateAlways );
       if (EC){
         outStream=std::nullopt;
-        llvm::errs()<<"EC IS TRUE\n";
+        //llvm::errs()<<"EC IS TRUE\n";
       }
     }
     if (outStream) return *outStream;
@@ -986,7 +983,7 @@ public:
     if (settings.SummarizeBuiltInBinOps)
       summarizeBuiltInBinOps(node.Entry);*/
     if (!timeStack.empty() && timeStack.back().ocs== Set && getSetArgs().isImplicit && ! settings.ShowImplicitConversions){
-      llvm::errs()<<"AAA\n";
+      //llvm::errs()<<"AAA\n";
 	    timeStack.back().isDisplayed=false;
     }
     if (!timeStack.empty() && timeStack.back().ocs== Set){
