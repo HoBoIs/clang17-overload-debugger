@@ -1889,7 +1889,7 @@ private:
                 specializedArgs[i].structurallyEquals(genericArgs[i]);
         } else
           entry.isExact = false;
-        if (0 && entry.isExact && !C.Best && !inCompare) {
+        if (entry.isExact && !C.Best && !inCompare) {
           static std::set<std::pair<SourceLocation, const FunctionDecl *>> s;
           if (!s.count(std::pair{Loc, x})) {
             s.emplace(Loc, x);
