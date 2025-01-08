@@ -1206,6 +1206,18 @@ class Sema;
 
   };
 
+  enum OverloadCompareResult{
+    Better,
+    Worse,
+    Ambiguous
+  };
+
+  OverloadCompareResult FindBetterOverloadCandidate(Sema &S,
+                                 const OverloadCandidate &Cand1,
+                                 const OverloadCandidate &Cand2,
+                                 SourceLocation Loc,
+                                 OverloadCandidateSet::CandidateSetKind Kind);
+
   bool isBetterOverloadCandidate(Sema &S,
                                  const OverloadCandidate &Cand1,
                                  const OverloadCandidate &Cand2,
